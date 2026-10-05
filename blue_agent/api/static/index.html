@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DefendForge - Cyber Command Center</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- 3D Background Canvas -->
+    <div id="canvas-container"></div>
+    
+    <!-- Overlay UI -->
+    <div class="hud-container">
+        
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="brand">
+                <span class="shield-icon">🛡️</span>
+                <h1>DefendForge</h1>
+            </div>
+            <div class="status-container">
+                <div class="status-indicator">
+                    <span class="pulse-dot"></span>
+                    <span id="connection-status">System Active</span>
+                </div>
+                <div class="agent-mode" id="agent-mode">Loading agent...</div>
+                <div class="clock" id="system-clock">00:00:00</div>
+            </div>
+        </header>
+        
+        <div class="main-layout">
+            <!-- Left Sidebar -->
+            <aside class="sidebar left-sidebar">
+                <div class="panel">
+                    <h2>Simulation Controls</h2>
+                    <div class="controls-grid">
+                        <button class="sim-btn autonomous-btn" id="autonomous-campaign">Start Autonomous</button>
+                        <button class="sim-btn" data-scenario="FullSpectrum">Full Spectrum</button>
+                        <button class="sim-btn" data-scenario="ReconThenExploit">Recon & Exploit</button>
+                        <button class="sim-btn" data-scenario="MultiVectorAttack">Multi-Vector</button>
+                        <button class="sim-btn" data-scenario="BruteForceLogin">Brute Force</button>
+                        <button class="sim-btn" data-scenario="EscalationChain">Escalation Chain</button>
+                        <button class="sim-btn" data-scenario="SlowAndLow">Slow & Low</button>
+                    </div>
+                    <div class="campaign-status" id="campaign-status">Campaign idle · simulation-only</div>
+                </div>
+                
+                <div class="panel feed-panel">
+                    <h2>Live Event Feed</h2>
+                    <div class="feed-container" id="event-feed">
+                        <!-- Feed items will be injected here -->
+                    </div>
+                </div>
+            </aside>
+            
+            <!-- Center Space (Transparent for 3D view) -->
+            <main class="center-view">
+                <!-- HTML Overlay Labels for 3D Nodes -->
+                <div id="labels-container"></div>
+            </main>
+            
+            <!-- Right Sidebar -->
+            <aside class="sidebar right-sidebar">
+                <div class="panel agent-panel">
+                    <h2>Agent Health</h2>
+                    <div class="agent-health-row">
+                        <span class="health-dot" id="health-dot"></span>
+                        <strong id="agent-status">Connecting</strong>
+                    </div>
+                    <div class="health-meta">
+                        <span>Events in session</span>
+                        <strong id="val-session-events">0</strong>
+                    </div>
+                    <div class="health-meta">
+                        <span>Last signal</span>
+                        <strong id="last-signal">Waiting</strong>
+                    </div>
+                </div>
+                <div class="panel">
+                    <h2>System Metrics</h2>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-label">Total Events</span>
+                            <span class="metric-value" id="val-total-events">0</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Precision</span>
+                            <span class="metric-value" id="val-precision">0.00</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Recall</span>
+                            <span class="metric-value" id="val-recall">0.00</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Avg TTD</span>
+                            <span class="metric-value" id="val-ttd">0ms</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="panel chart-panel">
+                    <h2>Detection Performance</h2>
+                    <div class="chart-container">
+                        <canvas id="performanceChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="panel chart-panel">
+                    <h2>Threat Distribution</h2>
+                    <div class="chart-container">
+                        <canvas id="threatChart"></canvas>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+    
+    <!-- Scripts -->
+    <script type="module" src="effects.js"></script>
+    <script type="module" src="scene.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>

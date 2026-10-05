@@ -1,0 +1,124 @@
+services:
+  db:
+    image: ankane/pgvector:v0.5.1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: bluememory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  target_app:
+    build:
+      context: ./target_app
+    ports:
+      - "5000:5000"
+    environment:
+      FLASK_ENV: production
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: always
+
+  minio:
+    image: elestio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-admin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-change-me-minio}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.2
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+
+  blue_agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: bluememory
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me-minio}
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      LLM_PROVIDER: ollama
+      LLM_MODEL: llama3
+      LLM_API_KEY: dummy
+      PPO_MODEL_PATH: models/ppo_policy.zip
+      DETECTION_MODEL_PATH: models/isolation_forest.joblib
+      RED_TARGET_URL: http://target_app:5000
+    depends_on:
+      db:
+        condition: service_healthy
+      target_app:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      elasticsearch:
+        condition: service_started
+    volumes:
+      - ./target_app:/app/target_app
+      - ./rules:/app/rules
+    command: ["uvicorn", "blue_agent.api.routes:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  red_agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      BLUE_API_URL: http://blue_agent:8000
+      RED_CAMPAIGN_ROUNDS: 5
+      RED_CAMPAIGN_EVENTS: 25
+      RED_SIMULATION_ONLY: "false"
+      RED_REQUEST_TIMEOUT: 5
+      RED_TARGET_URL: http://target_app:5000
+    depends_on:
+      blue_agent:
+        condition: service_healthy
+    command: ["python", "-m", "red_agent.container_runner"]
+
+volumes:
+  pgdata:
+  minio_data:
+  es_data:
