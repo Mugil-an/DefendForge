@@ -156,6 +156,10 @@ function createLabels() {
 }
 
 function updateHTMLPositions() {
+    const container = document.getElementById('labels-container');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+
     const updateLabel = (id, pos3d) => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -164,11 +168,14 @@ function updateHTMLPositions() {
         pos.y -= 2; // offset below the node
         pos.project(camera);
         
-        const x = (pos.x * .5 + .5) * window.innerWidth;
-        const y = (pos.y * -.5 + .5) * window.innerHeight;
-        
-        el.style.left = `${x}px`;
-        el.style.top = `${y}px`;
+        const x = (pos.x * .5 + .5) * window.innerWidth - rect.left;
+        const y = (pos.y * -.5 + .5) * window.innerHeight - rect.top;
+
+        const margin = 12;
+        const clampedX = Math.max(margin, Math.min(rect.width - margin, x));
+        const clampedY = Math.max(margin, Math.min(rect.height - margin, y));
+        el.style.left = `${clampedX}px`;
+        el.style.top = `${clampedY}px`;
     };
     
     updateLabel('label-red', nodes.red.position);

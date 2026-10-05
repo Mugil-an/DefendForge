@@ -93,7 +93,16 @@ class RedAgent:
     def get_campaign_status(self) -> Dict:
         """Return a serializable snapshot of the latest autonomous campaign."""
         if self._campaign is None:
-            return {"status": "idle", "rounds": 0, "events": 0, "history": []}
+            return {
+                "status": "idle",
+                "rounds": 0,
+                "events": 0,
+                "max_rounds": red_settings.max_campaign_rounds,
+                "max_events": red_settings.max_campaign_events,
+                "history": [],
+                "simulation_only": red_settings.simulation_only,
+                "execution_mode": "simulation" if red_settings.simulation_only else "live_http",
+            }
         state = self._campaign.state
         return {
             "status": "completed" if not state.can_continue() else "idle",

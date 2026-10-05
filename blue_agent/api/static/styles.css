@@ -132,15 +132,19 @@ body {
 
 /* Main Layout */
 .main-layout {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) minmax(0, 1fr) minmax(280px, 340px);
     flex: 1;
     overflow: hidden;
     padding: 24px;
     gap: 24px;
+    min-height: 0;
+    min-width: 0;
 }
 
 .sidebar {
-    width: 340px;
+    width: auto;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -151,12 +155,17 @@ body {
 }
 
 @media (min-width: 1600px) {
-    .sidebar { width: 380px; }
+    .main-layout {
+        grid-template-columns: minmax(300px, 380px) minmax(0, 1fr) minmax(300px, 380px);
+    }
 }
 
 .center-view {
+    min-width: 0;
+    min-height: 0;
     flex: 1;
     position: relative;
+    overflow: hidden;
 }
 
 #labels-container {
@@ -405,4 +414,79 @@ body {
     position: relative;
     height: 130px;
     width: 100%;
+}
+
+@media (max-width: 1100px) {
+    .main-layout {
+        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(240px, 300px);
+        padding: 16px;
+        gap: 16px;
+    }
+
+    .panel {
+        padding: 16px;
+    }
+
+    .metric-card {
+        padding: 12px 8px;
+    }
+
+    .metric-value {
+        font-size: 26px;
+    }
+}
+
+@media (max-width: 820px) {
+    body {
+        overflow: auto;
+        height: auto;
+        min-height: 100vh;
+    }
+
+    .hud-container {
+        height: auto;
+        min-height: 100vh;
+    }
+
+    .top-bar {
+        padding: 12px 16px;
+    }
+
+    .status-container {
+        gap: 10px;
+    }
+
+    .agent-mode,
+    .clock {
+        display: none;
+    }
+
+    .main-layout {
+        display: flex;
+        flex-direction: column;
+        overflow: visible;
+        padding: 16px;
+    }
+
+    .center-view {
+        order: -1;
+        min-height: 360px;
+    }
+
+    .sidebar {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .feed-panel {
+        min-height: 260px;
+    }
+
+    .chart-panel {
+        height: 220px;
+    }
+
+    .chart-container {
+        height: 170px;
+    }
 }

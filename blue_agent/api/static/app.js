@@ -410,6 +410,8 @@ function updateCampaignStatus(data) {
     const maxRounds = data.max_rounds ?? data.rounds ?? 5;
     const maxEvents = data.max_events ?? 25;
     const label = status === 'started' ? 'running' : status;
+    const mode = data.execution_mode ||
+        (data.simulation_only === false ? 'live HTTP' : 'simulation');
     document.getElementById('campaign-status').textContent =
-        `Campaign ${label} · ${rounds}/${maxRounds} rounds · ${events}/${maxEvents} events · simulation-only`;
+        `Campaign ${label} · ${rounds}/${maxRounds} rounds · ${events}/${maxEvents} events · ${mode}`;
 }
