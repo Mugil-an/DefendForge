@@ -47,9 +47,11 @@
             <!-- Left Sidebar -->
             <aside class="sidebar left-sidebar">
                 <div class="panel">
-                    <h2>Simulation Controls</h2>
+                    <h2>Campaign Controls</h2>
                     <div class="controls-grid">
-                        <button class="sim-btn autonomous-btn" id="autonomous-campaign">Start Autonomous</button>
+                        <button class="sim-btn coevolution-btn" id="coevolution-campaign" title="Run full Red↔Blue adversarial co-evolution with Green Agent traffic">⚔️ Co-Evolution</button>
+                        <button class="sim-btn autonomous-btn" id="full-autonomous-campaign" title="Run autonomous campaign with recon, LLM planning, and adaptive memory">🤖 Full Autonomous</button>
+                        <button class="sim-btn autonomous-btn" id="autonomous-campaign">▶ Quick Campaign</button>
                         <button class="sim-btn" data-scenario="FullSpectrum">Full Spectrum</button>
                         <button class="sim-btn" data-scenario="ReconThenExploit">Recon & Exploit</button>
                         <button class="sim-btn" data-scenario="MultiVectorAttack">Multi-Vector</button>
@@ -57,7 +59,11 @@
                         <button class="sim-btn" data-scenario="EscalationChain">Escalation Chain</button>
                         <button class="sim-btn" data-scenario="SlowAndLow">Slow & Low</button>
                     </div>
-                    <div class="campaign-status" id="campaign-status">Campaign idle · simulation-only</div>
+                    <div class="campaign-status" id="campaign-status">Campaign idle · ready</div>
+                    <div class="coevolution-progress" id="coevolution-progress" style="display:none;">
+                        <div class="progress-bar"><div class="progress-fill" id="coevolution-fill"></div></div>
+                        <small id="coevolution-label">Round 0/0</small>
+                    </div>
                 </div>
 
                 <div class="panel feed-panel">

@@ -300,6 +300,19 @@ class AutonomousCampaignRequest(BaseModel):
     max_events: int = 25
 
 
+class FullAutonomousRequest(BaseModel):
+    rounds: int = 5
+    events_per_round: int = 10
+    use_llm: bool = True
+
+
+class CoEvolutionRequest(BaseModel):
+    rounds: int = 5
+    attacks_per_round: int = 10
+    benign_per_round: int = 5
+    use_llm: bool = True
+
+
 # ---------------------------------------------------------------------------
 # WebSocket Endpoint
 # ---------------------------------------------------------------------------
@@ -430,6 +443,155 @@ async def start_red_campaign(request: AutonomousCampaignRequest) -> Dict[str, An
 def reset_red_campaign() -> Dict[str, Any]:
     _get_red_agent().reset()
     return _get_red_agent().get_campaign_status()
+
+
+@app.post("/api/red/autonomous")
+async def start_full_autonomous_campaign(request: FullAutonomousRequest) -> Dict[str, Any]:
+    """
+    Run a full autonomous Red Agent campaign with:
+    - Real reconnaissance scanning
+    - LLM-guided attack planning (if available)
+    - Adaptive memory across rounds
+    - Real HTTP exploit execution
+    """
+    if request.rounds < 1 or request.rounds > 50:
+        raise HTTPException(status_code=422, detail="rounds must be between 1 and 50")
+
+    red = _get_red_agent()
+    await ws_manager.broadcast_event("campaign", {
+        "status": "started",
+        "mode": "full_autonomous",
+        "rounds": request.rounds,
+        "events_per_round": request.events_per_round,
+        "use_llm": request.use_llm,
+    })
+
+    try:
+        result = red.run_full_autonomous_campaign(
+            rounds=request.rounds,
+            max_events_per_round=request.events_per_round,
+            use_llm=request.use_llm,
+        )
+
+        # Process Red traffic through Blue Agent
+        blue_agent = _get_agent()
+        if result.traffic:
+            # Enrich with labels
+            enriched = []
+            for evt, truth in zip(result.traffic, result.ground_truth):
+                enriched.append({
+                    **evt,
+                    "is_attack": truth.get("is_attack", True),
+                    "attack_type": truth.get("attack_type"),
+                    "severity": truth.get("severity", "low"),
+                })
+            blue_agent.process_traffic(enriched)
+
+        # Broadcast events to WebSocket
+        details = getattr(blue_agent, "last_round_details", [])
+        for index, event in enumerate(result.traffic):
+            truth = result.ground_truth[index] if index < len(result.ground_truth) else {}
+            ws_event = _decorate_event({
+                "source_ip": event.get("source", "unknown"),
+                "endpoint": event.get("endpoint", "/"),
+                "method": event.get("method", "GET"),
+                "is_attack": True,
+                "attack_type": truth.get("attack_type"),
+                "severity": truth.get("severity", "low"),
+                "action": "blocked",
+                "timestamp": event.get("timestamp", ""),
+                "rationale": truth.get("rationale", ""),
+                "exploit_success": truth.get("exploit_success", False),
+                "round": truth.get("round", 0),
+            }, details[index] if index < len(details) else None)
+            _memory_log.insert(0, ws_event)
+            await ws_manager.broadcast_event("attack", ws_event)
+            await asyncio.sleep(0.05)
+
+        if len(_memory_log) > 200:
+            del _memory_log[200:]
+
+        status = red.get_campaign_status()
+        await ws_manager.broadcast_event("campaign", {**status, "status": "completed"})
+
+        return {
+            "campaign": status,
+            "events_processed": result.total_attacks,
+            "successful_exploits": result.successful_exploits,
+            "detected_attacks": result.detected_attacks,
+            "round_summaries": result.round_summaries,
+            "strategy_evolution": result.strategy_evolution,
+            "recon_report": result.recon_report,
+        }
+    except Exception as e:
+        log.error("full_autonomous_campaign_failed", error=str(e))
+        import traceback
+        traceback.print_exc()
+        await ws_manager.broadcast_event("campaign", {"status": "failed", "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"Full autonomous campaign failed: {e}")
+
+
+@app.post("/api/coevolution")
+async def run_coevolution(request: CoEvolutionRequest) -> Dict[str, Any]:
+    """
+    Run a full adversarial co-evolution campaign:
+    - Multiple rounds of Red ↔ Blue competition
+    - Green Agent background traffic for realistic detection
+    - Metrics tracked over rounds showing improvement
+    - Red adapts, Blue improves
+    """
+    if request.rounds < 1 or request.rounds > 20:
+        raise HTTPException(status_code=422, detail="rounds must be between 1 and 20")
+
+    await ws_manager.broadcast_event("coevolution", {
+        "status": "started",
+        "rounds": request.rounds,
+        "attacks_per_round": request.attacks_per_round,
+        "benign_per_round": request.benign_per_round,
+    })
+
+    try:
+        from coevolution import CoEvolutionEngine
+        engine = CoEvolutionEngine(
+            target_url=str(os.environ.get("RED_TARGET_URL", "http://target_app:5000")),
+            max_rounds=request.rounds,
+            attacks_per_round=request.attacks_per_round,
+            benign_per_round=request.benign_per_round,
+            use_llm=request.use_llm,
+        )
+        result = engine.run()
+
+        # Broadcast results
+        for round_result in result.round_results:
+            await ws_manager.broadcast_event("coevolution_round", {
+                "round": round_result.round_number,
+                "attacks_launched": round_result.attacks_launched,
+                "attacks_detected": round_result.attacks_detected,
+                "exploit_rate": (
+                    round_result.successful_exploits / max(1, round_result.attacks_launched)
+                ),
+                "detection_rate": (
+                    round_result.attacks_detected / max(1, round_result.attacks_launched)
+                ),
+                "time_to_detect_ms": round(round_result.time_to_detect_ms, 2),
+                "time_to_remediate_ms": round(round_result.time_to_remediate_ms, 2),
+                "patches_accepted": round_result.patches_accepted,
+                "patches_rolled_back": round_result.patches_rolled_back,
+            })
+            await asyncio.sleep(0.1)
+
+        await ws_manager.broadcast_event("coevolution", {
+            "status": "completed",
+            "summary": result.blue_improvement_summary,
+        })
+
+        return result.to_dict()
+    except Exception as e:
+        log.error("coevolution_failed", error=str(e))
+        import traceback
+        traceback.print_exc()
+        await ws_manager.broadcast_event("coevolution", {"status": "failed", "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"Co-evolution failed: {e}")
 
 
 @app.post("/api/audit")

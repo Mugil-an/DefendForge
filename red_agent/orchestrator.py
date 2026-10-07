@@ -6,19 +6,28 @@ from red_agent.traffic_generator import TrafficGenerator
 from red_agent.scenarios import get_scenario, ScenarioResult
 from red_agent.campaign import SimulatedCampaign
 from red_agent.live_campaign import LiveCampaign
+from red_agent.autonomous_campaign import AutonomousCampaign, AutonomousCampaignResult
+from red_agent.memory import RedMemory
 from red_agent.config import red_settings
 from blue_agent.logging_cfg import get_logger
 
 log = get_logger("red.orchestrator")
 
 class RedAgent:
-    """Orchestrator for managing Red Agent simulated attack operations."""
+    """Orchestrator for managing Red Agent attack operations."""
     
     def __init__(self, seed: int = 42):
         self._generator = TrafficGenerator(seed=seed)
         self._attack_log: List[Dict] = []
         self._campaign = None
+        self._autonomous_campaign: AutonomousCampaign | None = None
+        self._autonomous_result: AutonomousCampaignResult | None = None
+        self._memory = RedMemory()
     
+    @property
+    def memory(self) -> RedMemory:
+        return self._memory
+
     def run_scenario(self, scenario_name: str) -> ScenarioResult:
         """Run a named attack scenario."""
         scenario = get_scenario(scenario_name, self._generator)
@@ -90,8 +99,61 @@ class RedAgent:
         self._attack_log.extend(result.ground_truth)
         return result
 
+    def run_full_autonomous_campaign(
+        self,
+        rounds: int = 5,
+        max_events_per_round: int = 10,
+        use_llm: bool = True,
+    ) -> AutonomousCampaignResult:
+        """
+        Run the full autonomous multi-round campaign with:
+        - Real reconnaissance
+        - LLM-guided attack planning (if available)
+        - Adaptive memory
+        - Multi-round evolution
+        """
+        log.info("starting_full_autonomous_campaign",
+                 rounds=rounds,
+                 events_per_round=max_events_per_round,
+                 use_llm=use_llm)
+
+        self._autonomous_campaign = AutonomousCampaign(
+            red_settings.target_url,
+            max_rounds=rounds,
+            max_events_per_round=max_events_per_round,
+            timeout=red_settings.request_timeout,
+            use_llm=use_llm,
+            memory=self._memory,
+        )
+
+        self._autonomous_result = self._autonomous_campaign.run()
+
+        # Also extend the attack log for backward compatibility
+        self._attack_log.extend(self._autonomous_result.ground_truth)
+
+        return self._autonomous_result
+
     def get_campaign_status(self) -> Dict:
         """Return a serializable snapshot of the latest autonomous campaign."""
+        # Check autonomous campaign first
+        if self._autonomous_result:
+            return {
+                "status": "completed",
+                "mode": "full_autonomous",
+                "rounds": self._autonomous_result.rounds_completed,
+                "events": self._autonomous_result.total_attacks,
+                "max_rounds": self._autonomous_campaign.max_rounds if self._autonomous_campaign else 0,
+                "max_events": (self._autonomous_campaign.max_rounds * self._autonomous_campaign.max_events_per_round) if self._autonomous_campaign else 0,
+                "successful_exploits": self._autonomous_result.successful_exploits,
+                "detected_attacks": self._autonomous_result.detected_attacks,
+                "round_summaries": self._autonomous_result.round_summaries,
+                "strategy_evolution": self._autonomous_result.strategy_evolution,
+                "recon_report": self._autonomous_result.recon_report,
+                "history": [],
+                "simulation_only": False,
+                "execution_mode": "full_autonomous",
+            }
+
         if self._campaign is None:
             return {
                 "status": "idle",
@@ -123,3 +185,6 @@ class RedAgent:
         """Reset the internal attack log."""
         self._attack_log.clear()
         self._campaign = None
+        self._autonomous_campaign = None
+        self._autonomous_result = None
+        self._memory.reset()

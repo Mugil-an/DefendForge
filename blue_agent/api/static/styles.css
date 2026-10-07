@@ -1,4 +1,4 @@
-﻿:root {
+:root {
     --bg-color: #060a14;
     --panel-bg: rgba(10, 15, 30, 0.75);
     --panel-border: rgba(255, 255, 255, 0.06);
@@ -641,4 +641,38 @@ body {
     .chart-container {
         height: 170px;
     }
+}
+
+/* Co-evolution and Autonomous buttons */
+.coevolution-btn {
+    background: rgba(139, 92, 246, 0.1) !important;
+    border-color: rgba(139, 92, 246, 0.4) !important;
+    color: #c4b5fd !important;
+}
+.coevolution-btn:hover {
+    background: rgba(139, 92, 246, 0.2) !important;
+    border-color: rgba(139, 92, 246, 0.8) !important;
+}
+
+.coevolution-progress {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.progress-bar {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--color-accent);
+    border-radius: 2px;
+    transition: width 0.5s ease;
 }

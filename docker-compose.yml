@@ -21,7 +21,10 @@ services:
     ports:
       - "5000:5000"
     environment:
-      FLASK_ENV: production
+      FLASK_ENV: development
+      FLASK_DEBUG: 1
+    volumes:
+      - ./target_app:/app
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 10s

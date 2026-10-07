@@ -194,6 +194,14 @@ function connectWebSocket() {
                 updateCampaignStatus(msg.data);
                 return;
             }
+            if (msg.type === 'coevolution') {
+                updateCoevolutionStatus(msg.data);
+                return;
+            }
+            if (msg.type === 'coevolution_round') {
+                updateCoevolutionRound(msg.data);
+                return;
+            }
             // Unwrap the {type, data} envelope from our API
             const payload = msg.data || msg;
             payload._ws_type = msg.type; // 'attack' or 'traffic'
@@ -413,9 +421,63 @@ function setupControls() {
             console.error('Autonomous campaign failed:', error);
         } finally {
             autonomousButton.disabled = false;
-            autonomousButton.textContent = 'Start Autonomous';
+            autonomousButton.textContent = '▶ Quick Campaign';
         }
     });
+
+    const fullAutonomousBtn = document.getElementById('full-autonomous-campaign');
+    if (fullAutonomousBtn) {
+        fullAutonomousBtn.addEventListener('click', async () => {
+            fullAutonomousBtn.disabled = true;
+            fullAutonomousBtn.textContent = 'Running...';
+            updateCampaignStatus({ status: 'started', rounds: 5, max_events: 50, mode: 'full_autonomous' });
+            const apiUrl = window.location.protocol === 'file:'
+                ? 'http://localhost:8000/api/red/autonomous'
+                : '/api/red/autonomous';
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rounds: 5, events_per_round: 10, use_llm: true })
+                });
+                if (!response.ok) throw new Error(`Full Autonomous API failed (${response.status})`);
+                const result = await response.json();
+                updateCampaignStatus(result.campaign);
+            } catch (error) {
+                updateCampaignStatus({ status: 'failed' });
+                console.error('Full Autonomous campaign failed:', error);
+            } finally {
+                fullAutonomousBtn.disabled = false;
+                fullAutonomousBtn.textContent = '🤖 Full Autonomous';
+            }
+        });
+    }
+
+    const coevolutionBtn = document.getElementById('coevolution-campaign');
+    if (coevolutionBtn) {
+        coevolutionBtn.addEventListener('click', async () => {
+            coevolutionBtn.disabled = true;
+            coevolutionBtn.textContent = 'Running...';
+            const apiUrl = window.location.protocol === 'file:'
+                ? 'http://localhost:8000/api/coevolution'
+                : '/api/coevolution';
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rounds: 5, attacks_per_round: 10, benign_per_round: 5, use_llm: true })
+                });
+                if (!response.ok) throw new Error(`Co-evolution API failed (${response.status})`);
+                const result = await response.json();
+                console.log("Coevolution completed:", result);
+            } catch (error) {
+                console.error('Co-evolution campaign failed:', error);
+            } finally {
+                coevolutionBtn.disabled = false;
+                coevolutionBtn.textContent = '⚔️ Co-Evolution';
+            }
+        });
+    }
 }
 
 // Handle metrics update from server
@@ -455,4 +517,41 @@ function updateCampaignStatus(data) {
     const el = document.getElementById('campaign-status');
     el.textContent = `${label}  ·  ${rounds}/${maxRounds} ROUNDS  ·  ${events}/${maxEvents} EVENTS  ·  ${mode}`;
     el.dataset.status = status;
+}
+
+function updateCoevolutionStatus(data) {
+    if (!data) return;
+    const status = data.status || 'idle';
+    const el = document.getElementById('campaign-status');
+    const progEl = document.getElementById('coevolution-progress');
+    
+    if (status === 'started') {
+        el.textContent = `CO-EVOLUTION RUNNING  ·  ${data.rounds} ROUNDS`;
+        el.dataset.status = 'started';
+        progEl.style.display = 'block';
+        document.getElementById('coevolution-fill').style.width = '0%';
+        document.getElementById('coevolution-label').textContent = `Round 0/${data.rounds}`;
+    } else if (status === 'completed') {
+        el.textContent = `CO-EVOLUTION COMPLETED`;
+        el.dataset.status = 'completed';
+        progEl.style.display = 'none';
+        // You could display the summary in the UI if desired
+        console.log("Co-evolution Summary:", data.summary);
+    } else if (status === 'failed') {
+        el.textContent = `CO-EVOLUTION FAILED`;
+        el.dataset.status = 'failed';
+        progEl.style.display = 'none';
+    }
+}
+
+function updateCoevolutionRound(data) {
+    if (!data) return;
+    const round = data.round;
+    // Assuming max rounds is known or we just show the current round
+    document.getElementById('coevolution-label').textContent = `Round ${round}`;
+    // We could calculate a percentage if we stored max_rounds, but let's just show activity
+    document.getElementById('coevolution-fill').style.width = '100%';
+    setTimeout(() => {
+        document.getElementById('coevolution-fill').style.width = '0%';
+    }, 500);
 }
