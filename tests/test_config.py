@@ -26,13 +26,13 @@ def test_database_url_format():
 def test_sync_database_url():
     from blue_agent.config import settings
     url = settings.db.sync_url
-    assert url.startswith("postgresql://")
+    assert url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://")
 
 
 def test_database_url_property():
     from blue_agent.config import settings
     url = settings.database_url
-    assert url.startswith("postgresql://")
+    assert url.startswith("postgresql://") or url.startswith("postgresql+psycopg2://")
 
 
 def test_llm_effective_base_url_openai():

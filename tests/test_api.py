@@ -37,6 +37,14 @@ class TestAPIEndpoints:
         assert data["status"] == "operational"
         assert "metrics" in data
         assert "events" in data
+
+    def test_research_novelty_is_phase_one_scoped(self, client):
+        response = client.get("/api/research/novelty")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["scope"] == "Phase 1 only"
+        assert data["phase_2"] == "excluded"
+        assert len(data["items"]) >= 3
     
     def test_memory(self, client):
         response = client.get("/api/memory?limit=5")

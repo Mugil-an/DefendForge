@@ -1,4 +1,4 @@
-:root {
+﻿:root {
     --bg-color: #060a14;
     --panel-bg: rgba(10, 15, 30, 0.75);
     --panel-border: rgba(255, 255, 255, 0.06);
@@ -166,6 +166,78 @@ body {
     flex: 1;
     position: relative;
     overflow: hidden;
+    isolation: isolate;
+}
+
+/* Keep the 3D scene visible through the center column. Trace and topology
+   occupy narrow HUD bands instead of covering the agent field. */
+.center-view .attack-path {
+    position: absolute;
+    z-index: 3;
+    top: 6px;
+    left: 6px;
+    right: 6px;
+    padding: 8px 10px;
+    gap: 6px;
+    background: rgba(10, 15, 30, 0.68);
+}
+.center-view .attack-path .path-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.center-view .attack-path h2 {
+    margin: 3px 0 0;
+    border: 0;
+    padding: 0;
+    font-size: 11px;
+}
+.center-view .attack-path .pipeline {
+    padding-bottom: 0;
+    gap: 3px;
+}
+.center-view .attack-path .path-meta > div {
+    padding: 5px 6px;
+}
+.center-view .attack-path .pipeline-step {
+    min-width: 55px;
+    padding: 5px 4px;
+    font-size: 8px;
+}
+.center-view .attack-path .pipeline-line {
+    min-width: 5px;
+}
+.center-view .attack-path .path-meta small {
+    font-size: 8px;
+    margin-bottom: 2px;
+}
+.center-view .attack-path .path-meta strong {
+    font-size: 9px;
+}
+.center-view .topology-panel {
+    position: absolute;
+    z-index: 3;
+    left: 6px;
+    right: 6px;
+    bottom: 6px;
+    margin-top: 0;
+    padding: 8px 10px;
+    gap: 6px;
+    background: rgba(10, 15, 30, 0.68);
+}
+.center-view .topology-panel .section-heading h2 {
+    font-size: 12px;
+    margin-top: 3px;
+}
+.center-view .topology-panel .topology-node {
+    padding: 5px 6px;
+}
+.center-view .topology-panel .node-icon {
+    font-size: 15px;
+    margin-bottom: 3px;
+}
+.center-view .topology-panel .event-timeline {
+    min-height: 18px;
 }
 
 #labels-container {
@@ -286,9 +358,26 @@ body {
 
 .campaign-status {
     margin-top: 12px;
-    color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1.4;
+    color: #c4b5fd;
+    background: rgba(139, 92, 246, 0.14);
+    border: 1px solid rgba(167, 139, 250, 0.45);
+    border-radius: 7px;
+    padding: 10px 12px;
+    font-size: 10px;
+    line-height: 1.3;
+    font-family: monospace;
+    font-weight: 700;
+    letter-spacing: .04em;
+}
+.campaign-status[data-status="completed"] {
+    color: #6ee7b7;
+    background: rgba(16, 185, 129, .12);
+    border-color: rgba(16, 185, 129, .45);
+}
+.campaign-status[data-status="failed"] {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, .12);
+    border-color: rgba(239, 68, 68, .45);
 }
 
 .sim-btn:disabled {
@@ -415,6 +504,69 @@ body {
     height: 130px;
     width: 100%;
 }
+
+/* Defense trace and center topology */
+.trace-panel { gap: 14px; }
+.trace-panel .path-title { margin-bottom: 0; }
+.pipeline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 2px 0 6px;
+}
+.pipeline-step {
+    flex: 1 0 auto;
+    min-width: 78px;
+    padding: 8px 9px;
+    border: 1px solid rgba(148,163,184,.2);
+    border-radius: 999px;
+    color: #64748b;
+    text-align: center;
+    font: 700 9px monospace;
+    letter-spacing: .05em;
+    background: rgba(15,23,42,.7);
+}
+.pipeline-step.complete { color: #cbd5e1; border-color: rgba(100,116,139,.55); }
+.pipeline-step.active { color: #6ee7b7; border-color: rgba(16,185,129,.65); background: rgba(16,185,129,.12); box-shadow: 0 0 12px rgba(16,185,129,.12); }
+.pipeline-line { height: 1px; min-width: 9px; background: rgba(100,116,139,.35); }
+.path-meta {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+.path-meta > div {
+    min-width: 0;
+    padding: 9px 10px;
+    background: rgba(2,6,23,.52);
+    border: 1px solid rgba(148,163,184,.13);
+    border-radius: 6px;
+}
+.path-meta small { display: block; color: #64748b; font: 700 9px monospace; letter-spacing: .08em; margin-bottom: 5px; }
+.path-meta strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e2e8f0; font: 600 11px monospace; }
+.topology-panel { margin-top: 14px; gap: 14px; }
+.section-heading { display:flex; justify-content:space-between; align-items:flex-start; }
+.section-heading h2 { margin: 4px 0 0; border: 0; padding: 0; }
+.eyebrow { color:#64748b; font:700 9px monospace; letter-spacing:.14em; }
+.live-chip { color:#6ee7b7; font:700 9px monospace; letter-spacing:.1em; }
+.live-chip i { display:inline-block; width:6px; height:6px; border-radius:50%; background:#34d399; box-shadow:0 0 8px #34d399; margin-right:5px; }
+.topology-grid { display:grid; grid-template-columns:1fr 48px 1fr 48px 1fr; align-items:center; }
+.topology-node { padding:12px 8px; text-align:center; border:1px solid rgba(148,163,184,.2); background:rgba(2,6,23,.66); border-radius:8px; }
+.topology-node strong { display:block; font:700 11px monospace; letter-spacing:.08em; }
+.topology-node small { display:block; color:#64748b; font:9px monospace; margin-top:4px; }
+.node-icon { display:block; font-size:20px; line-height:1; margin-bottom:7px; }
+.attack-node { border-color:rgba(239,68,68,.5); color:#f87171; }
+.target-node { border-color:rgba(245,158,11,.5); color:#fbbf24; }
+.defense-node { border-color:rgba(16,185,129,.5); color:#34d399; }
+.topology-edge { height:1px; position:relative; background:rgba(100,116,139,.45); }
+.topology-edge::after { content:""; position:absolute; right:0; top:-3px; border-left:6px solid currentColor; border-top:3px solid transparent; border-bottom:3px solid transparent; }
+.attack-edge { color:#ef4444; background:linear-gradient(90deg,#ef4444,rgba(239,68,68,.15)); }
+.defense-edge { color:#10b981; background:linear-gradient(90deg,rgba(16,185,129,.15),#10b981); }
+.event-timeline { display:flex; gap:6px; overflow:hidden; min-height:24px; }
+.event-timeline > span:first-child { color:#475569; font:10px monospace; }
+.timeline-event { padding:5px 8px; border-radius:4px; font:9px monospace; white-space:nowrap; border:1px solid rgba(148,163,184,.2); }
+.timeline-event.attack { color:#fca5a5; border-color:rgba(239,68,68,.3); }
+.timeline-event.benign { color:#67e8f9; border-color:rgba(6,182,212,.3); }
 
 @media (max-width: 1100px) {
     .main-layout {

@@ -43,50 +43,7 @@ function createNode(position, color, type) {
         mesh.add(wire);
         
     } else {
-        // Red/Blue spheres
-        const geometry = new THREE.SphereGeometry(1, 32, 32);
-        const material = new THREE.MeshPhongMaterial({ 
-            color: color,
-            emissive: color,
-            emissiveIntensity: 0.35,
-            shininess: 100,
-            transparent: true,
-            opacity: 0.85
-        });
-        mesh = new THREE.Mesh(geometry, material);
-        
-        if (type === 'blue') {
-            // Add shield ring around blue agent
-            const ringGeo = new THREE.TorusGeometry(1.6, 0.04, 16, 64);
-            const ringMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.5 });
-            const ring = new THREE.Mesh(ringGeo, ringMat);
-            ring.rotation.x = Math.PI / 2;
-            group.add(ring);
-            group.ring = ring;
-            
-            // Second ring at angle
-            const ring2 = new THREE.Mesh(
-                new THREE.TorusGeometry(1.8, 0.03, 16, 64),
-                new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.3 })
-            );
-            ring2.rotation.x = Math.PI / 3;
-            ring2.rotation.z = Math.PI / 4;
-            group.add(ring2);
-            group.ring2 = ring2;
-        } else if (type === 'green') {
-            // Pulsing rings for green agent
-            const ringGeo = new THREE.TorusGeometry(1.4, 0.02, 16, 32);
-            const ringMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.6 });
-            const ring = new THREE.Mesh(ringGeo, ringMat);
-            group.add(ring);
-            group.ring = ring;
-        } else {
-            // Wireframe overlay for red agent
-            const wireGeo = new THREE.WireframeGeometry(geometry);
-            const wireMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 });
-            const wire = new THREE.LineSegments(wireGeo, wireMat);
-            mesh.add(wire);
-        }
+        mesh = createAbstractAgent(color, type);
     }
     
     group.add(mesh);
@@ -109,6 +66,46 @@ function createNode(position, color, type) {
     group.add(sprite);
     
     scene.add(group);
+    return group;
+}
+
+function createAbstractAgent(color, type) {
+    const group = new THREE.Group();
+    const material = new THREE.MeshPhongMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.3,
+        shininess: 90
+    });
+    const dark = new THREE.MeshBasicMaterial({ color: 0x07101f, transparent: true, opacity: 0.9 });
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.95, 0), material);
+    group.add(core);
+
+    const nodePositions = [
+        new THREE.Vector3(0, 1.45, 0),
+        new THREE.Vector3(-1.1, -0.65, 0),
+        new THREE.Vector3(1.1, -0.65, 0),
+        new THREE.Vector3(0, 0, 1.15)
+    ];
+    nodePositions.forEach(position => {
+        const node = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), material);
+        node.position.copy(position);
+        group.add(node);
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, 0),
+            position
+        ]);
+        group.add(new THREE.Line(lineGeometry, new THREE.LineBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.55
+        })));
+    });
+    if (type === 'blue') {
+        const shield = new THREE.Mesh(new THREE.OctahedronGeometry(1.55, 0), dark);
+        shield.scale.set(1, 1, 0.12);
+        group.add(shield);
+    }
     return group;
 }
 

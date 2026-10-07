@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-10-07T15:00:33.571048+00:00",
+  "training_rows": 640000,
+  "validation_rows": 160000,
+  "anomaly_threshold": 0.02692290795611947,
+  "metrics": {
+    "false_positive_rate": 0.0500062452701263,
+    "attack_precision": 0.7783206305778125,
+    "attack_recall": 0.9999581537431477,
+    "confusion_matrix": [
+      [
+        129297,
+        6806
+      ],
+      [
+        1,
+        23896
+      ]
+    ]
+  }
+}

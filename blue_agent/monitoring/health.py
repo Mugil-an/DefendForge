@@ -26,6 +26,7 @@ class HealthChecker:
             engine = create_engine(settings.db.sync_url)
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
+            engine.dispose()
             return {"status": "ok", "message": "Database connected"}
         except SQLAlchemyError as e:
             log.warning("db_health_check_failed", error=str(e))

@@ -7,7 +7,7 @@ from typing import List
 @dataclass
 class RedAgentConfig:
     target_url: str = field(
-        default_factory=lambda: os.getenv("RED_TARGET_URL", "http://target-app:5000")
+        default_factory=lambda: os.getenv("RED_TARGET_URL", "http://target_app:5000")
     )
     attack_intensity: str = field(
         default_factory=lambda: os.getenv("RED_ATTACK_INTENSITY", "medium")

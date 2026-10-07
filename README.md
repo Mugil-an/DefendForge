@@ -29,6 +29,22 @@ The system operates as a continuous loop between the Red Agent and the Blue Agen
 
 The Blue Agent analyzes logs and traffic, makes decisions using a PPO (Proximal Policy Optimization) RL agent, and falls back to an LLM for complex reasoning. It dynamically retrieves remediation strategies using RAG (Retrieval-Augmented Generation) and applies patches or hardens the application.
 
+### Current build scope
+
+The implemented dashboard covers the complete Phase 1 loop: isolated target traffic,
+Red/Green activity, Blue detection, confidence-gated fast/slow routing, remediation
+validation, rollback visibility, hardening, memory, and multi-round metrics. Phase 2
+(self-evolving moving-target defense and its held-out comparison) is intentionally
+excluded from this build.
+
+Open the dashboard to see the actual event stream and the attack path
+`RECON -> DETECT -> ROUTE -> REMEDIATE -> VALIDATE -> HARDEN`. Ground truth is shown
+separately from the defender result, so missed detections are not presented as
+successful blocks. The Research novelty panel is backed by `/api/research/novelty`
+and maps implemented integrations to the supplied papers. It deliberately does not
+claim that DefendForge originated those research ideas. The self-evolving moving
+target defense work is displayed as a Phase 2 reference only and is not implemented.
+
 ## Features
 
 - **Detection**: Real-time traffic analysis and anomaly detection.

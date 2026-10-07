@@ -14,7 +14,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- Styles -->
-    <link rel="stylesheet" href="styles.css?v=2">
+    <link rel="stylesheet" href="styles.css?v=5">
     
     <!-- Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -59,7 +59,7 @@
                     </div>
                     <div class="campaign-status" id="campaign-status">Campaign idle · simulation-only</div>
                 </div>
-                
+
                 <div class="panel feed-panel">
                     <h2>Live Event Feed</h2>
                     <div class="feed-container" id="event-feed">
@@ -72,6 +72,51 @@
             <main class="center-view">
                 <!-- HTML Overlay Labels for 3D Nodes -->
                 <div id="labels-container"></div>
+                <section class="attack-path panel">
+                    <div class="path-header">
+                        <div>
+                            <span class="eyebrow">LIVE DEFENSE TRACE</span>
+                            <h2 id="path-title">Waiting for a real event</h2>
+                        </div>
+                        <span class="path-outcome" id="path-outcome">IDLE</span>
+                    </div>
+                    <div class="pipeline" id="pipeline" aria-label="Defense pipeline">
+                        <span class="pipeline-step">01&nbsp; RECON</span>
+                        <span class="pipeline-line"></span>
+                        <span class="pipeline-step">02&nbsp; DETECT</span>
+                        <span class="pipeline-line"></span>
+                        <span class="pipeline-step">03&nbsp; ROUTE</span>
+                        <span class="pipeline-line"></span>
+                        <span class="pipeline-step">04&nbsp; REMEDIATE</span>
+                        <span class="pipeline-line"></span>
+                        <span class="pipeline-step">05&nbsp; VALIDATE</span>
+                        <span class="pipeline-line"></span>
+                        <span class="pipeline-step">06&nbsp; HARDEN</span>
+                    </div>
+                    <div class="path-meta">
+                        <div><small>SOURCE</small><strong id="path-source">—</strong></div>
+                        <div><small>ROUTE</small><strong id="path-route">—</strong></div>
+                        <div><small>ACTION</small><strong id="path-action">—</strong></div>
+                        <div><small>VALIDATION</small><strong id="path-validation">—</strong></div>
+                    </div>
+                </section>
+                <section class="topology-panel panel">
+                    <div class="section-heading">
+                        <div>
+                            <span class="eyebrow">EVENT TOPOLOGY</span>
+                            <h2>Red / target / blue path</h2>
+                        </div>
+                        <span class="live-chip"><i></i> LIVE</span>
+                    </div>
+                    <div class="topology-grid">
+                        <div class="topology-node attack-node"><span class="node-icon">↗</span><strong>RED</strong><small>ATTACK SOURCE</small></div>
+                        <span class="topology-edge attack-edge"></span>
+                        <div class="topology-node target-node"><span class="node-icon">▦</span><strong>TARGET</strong><small>LOCAL APP</small></div>
+                        <span class="topology-edge defense-edge"></span>
+                        <div class="topology-node defense-node"><span class="node-icon">◈</span><strong>BLUE</strong><small>CONTROL PLANE</small></div>
+                    </div>
+                    <div class="event-timeline" id="event-timeline"><span>No events in current view</span></div>
+                </section>
             </main>
             
             <!-- Right Sidebar -->
@@ -132,7 +177,7 @@
     
     <!-- Scripts -->
     <script type="module" src="effects.js?v=2"></script>
-    <script type="module" src="scene.js?v=2"></script>
-    <script type="module" src="app.js?v=2"></script>
+    <script type="module" src="scene.js?v=8"></script>
+    <script type="module" src="app.js?v=8"></script>
 </body>
 </html>

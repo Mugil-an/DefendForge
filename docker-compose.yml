@@ -82,6 +82,8 @@ services:
       LLM_API_KEY: dummy
       PPO_MODEL_PATH: models/ppo_policy.zip
       DETECTION_MODEL_PATH: models/isolation_forest.joblib
+      TARGET_APP_URL: http://target_app:5000
+      VALIDATION_HEALTH_URL: http://target_app:5000/health
       RED_TARGET_URL: http://target_app:5000
     depends_on:
       db:
@@ -93,8 +95,11 @@ services:
       elasticsearch:
         condition: service_started
     volumes:
+      - ./blue_agent:/app/blue_agent
+      - ./red_agent:/app/red_agent
       - ./target_app:/app/target_app
       - ./rules:/app/rules
+      - ./models:/app/models
     command: ["uvicorn", "blue_agent.api.routes:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
@@ -116,6 +121,12 @@ services:
     depends_on:
       blue_agent:
         condition: service_healthy
+    volumes:
+      - ./blue_agent:/app/blue_agent
+      - ./red_agent:/app/red_agent
+      - ./target_app:/app/target_app
+      - ./rules:/app/rules
+      - ./models:/app/models
     command: ["python", "-m", "red_agent.container_runner"]
 
 volumes:

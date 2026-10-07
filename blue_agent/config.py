@@ -65,7 +65,7 @@ class DatabaseSettings:
     @property
     def sync_url(self) -> str:
         return (
-            f"postgresql://{self.user}:{self.password}"
+            f"postgresql+psycopg2://{self.user}:{self.password}"
             f"@{self.host}:{self.port}/{self.database}"
         )
 
@@ -131,7 +131,7 @@ class PPOSettings:
 @dataclass
 class AuditSettings:
     target_app_path: str = _env("TARGET_APP_PATH", str(PROJECT_ROOT / "target_app"))
-    target_app_url: str = _env("TARGET_APP_URL", "http://target-app:5000")
+    target_app_url: str = _env("TARGET_APP_URL", "http://target_app:5000")
     semgrep_rules: str = _env("SEMGREP_RULES", "p/python")
     bandit_config: str = _env("BANDIT_CONFIG", "")
     dependency_check_path: str = _env(
@@ -144,7 +144,7 @@ class ValidationSettings:
     test_dir: str = _env("VALIDATION_TEST_DIR", str(PROJECT_ROOT / "tests"))
     timeout_seconds: int = _env_int("VALIDATION_TIMEOUT", 300)
     health_check_url: str = _env(
-        "VALIDATION_HEALTH_URL", "http://target-app:5000/health"
+        "VALIDATION_HEALTH_URL", "http://target_app:5000/health"
     )
     health_check_retries: int = _env_int("VALIDATION_HEALTH_RETRIES", 5)
     health_check_interval: int = _env_int("VALIDATION_HEALTH_INTERVAL", 3)
@@ -183,7 +183,7 @@ class SecuritySettings:
 @dataclass
 class RedAgentSettings:
     """Configuration for the simulated Red Agent adversary."""
-    target_url: str = _env("RED_AGENT_TARGET_URL", "http://target-app:5000")
+    target_url: str = _env("RED_AGENT_TARGET_URL", "http://target_app:5000")
     attack_intensity: str = _env("RED_AGENT_INTENSITY", "medium")  # low | medium | high
     benign_ratio: float = _env_float("RED_AGENT_BENIGN_RATIO", 0.3)
     scenario_duration: int = _env_int("RED_AGENT_SCENARIO_DURATION", 60)

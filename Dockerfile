@@ -9,6 +9,7 @@ RUN apt-get update \
 COPY requirements.txt .
 ENV PIP_DEFAULT_TIMEOUT=300
 ENV PIP_RETRIES=10
+RUN python -m pip install --upgrade pip
 RUN python -m pip install --no-cache-dir --default-timeout=600 --retries=20 \
     --extra-index-url https://download.pytorch.org/whl/cpu \
     -r requirements.txt

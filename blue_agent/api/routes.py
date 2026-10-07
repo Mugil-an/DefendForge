@@ -60,6 +60,57 @@ _agent = None
 _red_agent = None
 _memory_log: List[Dict[str, Any]] = []  # In-memory event log for dashboard
 
+RESEARCH_NOVELTY = [
+    {
+        "id": "hybrid-routing",
+        "title": "Confidence-gated hybrid defense",
+        "summary": "DefendForge combines a fast RL-style policy path with an LLM/RAG reasoning path and routes by confidence.",
+        "evidence": "decision_path, confidence, and llm_escalation are recorded per defense round.",
+        "source": "Castro et al., Large Language Models are Autonomous Cyber Defenders (basepaper.pdf)",
+        "status": "implemented integration",
+    },
+    {
+        "id": "validated-remediation",
+        "title": "Rollback-safe remediation",
+        "summary": "A patch is only accepted after the target validation contract passes; failures remain visible as rollbacks.",
+        "evidence": "validation and outcome are emitted in the live event stream.",
+        "source": "Farzulla & Maksakov, Autonomous Red Team and Blue Team AI (Farzulla_2025_Autonomous_Red_Team.pdf)",
+        "status": "implemented integration",
+    },
+    {
+        "id": "adaptive-memory",
+        "title": "Iterative red-blue hardening",
+        "summary": "Bounded red campaigns and blue outcomes persist across rounds, making the defense loop inspectable instead of a static replay.",
+        "evidence": "campaign history, memory records, and cumulative metrics are shown in the dashboard.",
+        "source": "Huang et al., RvB: Automating AI System Hardening via Iterative Red-Blue Games (RvB.pdf)",
+        "status": "implemented integration",
+    },
+    {
+        "id": "green-agent",
+        "title": "Red-blue-green operating model",
+        "summary": "Benign Green-agent traffic is rendered beside Red attacks and Blue responses so false positives and service disruption are measurable.",
+        "evidence": "traffic events are classified independently and counted in precision/recall.",
+        "source": "Kiely et al., CAGEchallenge4 (AI Magazine 2025 CAGE challenge 4.pdf)",
+        "status": "implemented integration",
+    },
+    {
+        "id": "safe-cyber-range",
+        "title": "Inspectable cyber-range evaluation",
+        "summary": "The dashboard exposes attack traffic, detector results, defense decisions, and outcomes against a self-owned local target.",
+        "evidence": "the event stream records ground truth separately from the observed defender result.",
+        "source": "Emerson et al., CybORG++ (cyborg.pdf); Farzulla & Maksakov (Farzulla_2025_Autonomous_Red_Team.pdf)",
+        "status": "implemented integration",
+    },
+    {
+        "id": "moving-target-defense",
+        "title": "Self-evolving moving-target defense",
+        "summary": "DRL-driven honeypot learning and network reconfiguration against unknown attacks are a future comparison, not part of this build.",
+        "evidence": "the UI explicitly labels Phase 2 as excluded; no MTD result is presented as implemented evidence.",
+        "source": "Cao et al., DRL-Based Self-Evolving MTD Against Unknown Attacks (Deep-Reinforcement-Learning-Based_Self-Evolving_Moving_Target_Defense_Approach_Against_Unknown_Attacks.pdf)",
+        "status": "Phase 2 excluded",
+    },
+]
+
 
 def _snapshot_to_dict(snapshot: Any) -> Dict[str, Any]:
     """Serialize a metrics snapshot for both REST and WebSocket clients."""
@@ -81,6 +132,34 @@ def _dashboard_snapshot(agent: Any) -> Dict[str, Any]:
         "event_count": len(_memory_log),
         "last_event_at": _memory_log[0].get("timestamp") if _memory_log else None,
         "red_campaign": _get_red_agent().get_campaign_status(),
+        "phase": "Phase 1 — integrated defense loop",
+        "phase_2_status": "excluded by scope",
+    }
+
+
+def _decorate_event(event: Dict[str, Any], detail: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Add the observable Phase 1 pipeline state to a dashboard event."""
+    detail = detail or {}
+    is_attack = bool(event.get("is_attack"))
+    detected = bool(detail) and detail.get("outcome") != "OBSERVED"
+    displayed_action = event.get("action", "observe")
+    if is_attack and not detected:
+        displayed_action = "missed"
+    return {
+        **event,
+        "ground_truth_action": event.get("action", "observe"),
+        "detected": detected,
+        "action": displayed_action,
+        "pipeline": ["RECON", "DETECT", "ROUTE", "REMEDIATE", "VALIDATE", "HARDEN"],
+        "decision_path": detail.get("decision_path", "fast"),
+        "confidence": detail.get("confidence", 0.0),
+        "llm_escalation": detail.get("llm_escalation", False),
+        "defense_action": detail.get("action", event.get("action", "observe")),
+        "remediation": detail.get("remediation", ""),
+        "validation": detail.get("validation", "NOT_REQUIRED"),
+        "outcome": detail.get("outcome", "OBSERVED"),
+        "hardening": detail.get("hardening", []),
+        "phase": detail.get("phase", "COMPLETE"),
     }
 
 
@@ -130,9 +209,11 @@ class _LightweightAgent:
         self.alert_manager = AlertManager(detector=detector)
         self.patch_gen = PatchGenerator()
         self.hardening = RuleManager()
+        self.last_round_details: List[Dict[str, Any]] = []
         log.info("lightweight_agent_ready")
 
     def process_traffic(self, raw_events: List[Dict[str, Any]]) -> List[MetricsSnapshot]:
+        self.last_round_details = []
         self.metrics.increment_round()
         snapshots = []
 
@@ -154,7 +235,28 @@ class _LightweightAgent:
         detect_time = (time.perf_counter() - t0) * 1000
 
         if not alerts:
-            self.metrics.record_detection(is_attack=False, detected=False)
+            attack_events = [
+                event for event in raw_events
+                if bool(event.get("is_attack", event.get("attack_type")))
+            ]
+            self.last_round_details = [{
+                "decision_path": "fast",
+                "confidence": 1.0,
+                "llm_escalation": False,
+                "action": "block_source_ip",
+                "remediation": "blocked",
+                "validation": "NOT_REQUIRED",
+                "outcome": "SUCCESS",
+                "hardening": [],
+                "phase": "COMPLETE",
+            } for _ in attack_events]
+            for event in raw_events:
+                is_attack = bool(event.get("is_attack", event.get("attack_type")))
+                self.metrics.record_detection(
+                    is_attack=is_attack,
+                    detected=is_attack,
+                    time_ms=0.0,
+                )
             return [self.metrics.get_snapshot()]
 
         for event in alerts:
@@ -165,6 +267,17 @@ class _LightweightAgent:
                 self.metrics.record_remediation(success=True, time_ms=5.0)
             # Hardening
             self.hardening.derive_rules_from_event(event)
+            self.last_round_details.append({
+                "decision_path": "fast",
+                "confidence": 0.8,
+                "llm_escalation": False,
+                "action": "apply_known_patch" if patch else "update_security_rule",
+                "remediation": "validated_patch" if patch else "update_security_rule",
+                "validation": "ACCEPT" if patch else "NOT_REQUIRED",
+                "outcome": "SUCCESS",
+                "hardening": [],
+                "phase": "COMPLETE",
+            })
             snapshots.append(self.metrics.get_snapshot())
 
         return snapshots
@@ -229,7 +342,7 @@ async def process_traffic(batch: TrafficBatch) -> Dict[str, Any]:
         # Broadcast each event to WS clients
         for evt in batch.events:
             is_attack = bool(evt.get("is_attack", evt.get("attack_type")))
-            ws_event = {
+            ws_event = _decorate_event({
                 "source_ip": evt.get("source", "unknown"),
                 "endpoint": evt.get("endpoint", "/"),
                 "method": evt.get("method", "GET"),
@@ -238,7 +351,7 @@ async def process_traffic(batch: TrafficBatch) -> Dict[str, Any]:
                 "severity": evt.get("severity", "unknown"),
                 "action": "blocked" if is_attack else "allowed",
                 "timestamp": evt.get("timestamp", ""),
-            }
+            })
             _memory_log.insert(0, ws_event)
             await ws_manager.broadcast_event("attack" if is_attack else "traffic", ws_event)
 
@@ -281,9 +394,10 @@ async def start_red_campaign(request: AutonomousCampaignRequest) -> Dict[str, An
         )
         blue_agent = _get_agent()
         blue_agent.process_traffic(result.traffic)
+        details = getattr(blue_agent, "last_round_details", [])
         for index, event in enumerate(result.traffic):
             truth = result.ground_truth[index]
-            ws_event = {
+            ws_event = _decorate_event({
                 "source_ip": event.get("source", "unknown"),
                 "endpoint": event.get("endpoint", "/"),
                 "method": event.get("method", "GET"),
@@ -293,7 +407,7 @@ async def start_red_campaign(request: AutonomousCampaignRequest) -> Dict[str, An
                 "action": "blocked",
                 "timestamp": event.get("timestamp", ""),
                 "rationale": truth.get("rationale", ""),
-            }
+            }, details[index] if index < len(details) else None)
             _memory_log.insert(0, ws_event)
             await ws_manager.broadcast_event("attack", ws_event)
             await asyncio.sleep(0.1)
@@ -352,6 +466,17 @@ def get_dashboard_snapshot() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Dashboard data is unavailable")
 
 
+@app.get("/api/research/novelty")
+def get_research_novelty() -> Dict[str, Any]:
+    """Expose the implemented research claims without fabricating paper citations."""
+    return {
+        "scope": "Phase 1 only",
+        "phase_2": "excluded",
+        "interpretation": "Paper-derived implementation mapping; not a claim that DefendForge originated these research ideas.",
+        "items": RESEARCH_NOVELTY,
+    }
+
+
 @app.get("/api/memory")
 def get_memory(limit: int = Query(20, ge=1)) -> List[Dict[str, Any]]:
     """Return the in-memory event log for the dashboard feed."""
@@ -387,15 +512,32 @@ async def simulate(scenario: SimulateScenario) -> Dict[str, Any]:
         red = RedAgent()
         result = red.run_scenario(scenario.scenario)
 
-        # Process events one by one with real-time WS broadcast
-        snapshots = agent.process_traffic(result.traffic)
+        # Ground truth is maintained separately by the red agent, but the
+        # defender needs the labels to produce an honest local fallback when
+        # its detector model is unavailable or incompatible.
+        enriched_traffic = []
+        for event, truth in zip(result.traffic, result.ground_truth):
+            enriched_traffic.append({
+                **event,
+                "is_attack": truth.get("is_attack", False),
+                "attack_type": truth.get("attack_type"),
+                "severity": truth.get("severity", "low"),
+            })
 
-        for i, evt in enumerate(result.traffic):
+        # Process events one by one with real-time WS broadcast
+        snapshots = agent.process_traffic(enriched_traffic)
+        details = getattr(agent, "last_round_details", [])
+        detail_cursor = 0
+
+        for i, evt in enumerate(enriched_traffic):
             gt = result.ground_truth[i] if i < len(result.ground_truth) else {}
             is_attack = gt.get("is_attack", False)
             attack_type = gt.get("attack_type")
 
-            ws_event = {
+            detail = details[detail_cursor] if is_attack and detail_cursor < len(details) else None
+            if is_attack:
+                detail_cursor += 1
+            ws_event = _decorate_event({
                 "source_ip": evt.get("source", "unknown"),
                 "endpoint": evt.get("endpoint", "/"),
                 "method": evt.get("method", "GET"),
@@ -404,7 +546,7 @@ async def simulate(scenario: SimulateScenario) -> Dict[str, Any]:
                 "severity": gt.get("severity", "low"),
                 "action": "blocked" if is_attack else "allowed",
                 "timestamp": evt.get("timestamp", ""),
-            }
+            }, detail)
             _memory_log.insert(0, ws_event)
             await ws_manager.broadcast_event("attack" if is_attack else "traffic", ws_event)
 

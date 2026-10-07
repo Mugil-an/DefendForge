@@ -82,24 +82,39 @@ class IsolationForestDetector(AnomalyDetectorBase):
         if not self._fitted:
             raise RuntimeError("Model not fitted — call fit() or load() first")
 
-        X_eval = self._scaler.transform(X) if getattr(self, "_scaler", None) is not None else X
-        raw_scores = self._model.score_samples(X_eval)  # higher = more normal
-        # Transform to [0, 1] where 1 = very anomalous
-        anomaly_scores = self._raw_to_score(raw_scores)
+        X_eval = (
+            self._scaler.transform(X)
+            if getattr(self, "_scaler", None) is not None
+            else X
+        )
+        if hasattr(self._model, "predict_proba"):
+            probs = self._model.predict_proba(X_eval)
+            # Probability of class 1 (Attack)
+            anomaly_scores = probs[:, 1] if probs.shape[1] > 1 else probs[:, 0]
+        else:
+            raw_scores = self._model.score_samples(X_eval)  # higher = more normal
+            # Transform to [0, 1] where 1 = very anomalous
+            anomaly_scores = self._raw_to_score(raw_scores)
 
         results: List[AnomalyResult] = []
         for score in anomaly_scores:
             is_anomaly = score >= self._threshold
             # Confidence = how far from the threshold (clamped 0-1)
             if is_anomaly:
-                confidence = min(1.0, 0.5 + (score - self._threshold) / (1.0 - self._threshold) * 0.5)
+                confidence = min(
+                    1.0, 0.5 + (score - self._threshold) / (1.0 - self._threshold) * 0.5
+                )
             else:
-                confidence = min(1.0, 0.5 + (self._threshold - score) / self._threshold * 0.5)
-            results.append(AnomalyResult(
-                is_anomaly=is_anomaly,
-                anomaly_score=round(float(score), 4),
-                confidence=round(float(confidence), 4),
-            ))
+                confidence = min(
+                    1.0, 0.5 + (self._threshold - score) / self._threshold * 0.5
+                )
+            results.append(
+                AnomalyResult(
+                    is_anomaly=is_anomaly,
+                    anomaly_score=round(float(score), 4),
+                    confidence=round(float(confidence), 4),
+                )
+            )
         return results
 
     def save(self, path: str) -> None:
@@ -117,7 +132,9 @@ class IsolationForestDetector(AnomalyDetectorBase):
         artifact = joblib.load(path)
         self._model = artifact["model"]
         self._scaler = artifact.get("scaler")
-        self._threshold = artifact.get("threshold", artifact.get("anomaly_threshold", self._threshold))
+        self._threshold = artifact.get(
+            "threshold", artifact.get("anomaly_threshold", self._threshold)
+        )
         self._fitted = True
         log.info("isolation_forest_loaded", path=path)
 

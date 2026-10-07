@@ -1,10 +1,13 @@
 // app.js - Main application logic, WebSocket, and UI updates
-import { init as initScene, fireAttack, fireDefense, fireBenign } from './scene.js';
+import { init as initScene, fireAttack, fireDefense, fireBenign } from './scene.js?v=8';
 
 // State
 let ws;
 let feedItems = [];
+const seenEventKeys = new Set();
 const MAX_FEED_ITEMS = 50;
+let dashboardPollTimer;
+let heartbeatTimer;
 
 // Metrics state
 let stats = {
@@ -30,13 +33,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 4. Bootstrap existing state before live events arrive
     loadDashboardSnapshot();
-    
     // 5. Setup Controls
     setupControls();
     
     // 6. Start clock
     setInterval(updateClock, 1000);
     updateClock();
+    dashboardPollTimer = setInterval(loadDashboardSnapshot, 3000);
 });
 
 function updateClock() {
@@ -61,6 +64,12 @@ async function loadDashboardSnapshot() {
         updateAgentHealth({ status: 'degraded', mode: 'offline' });
         console.error('Unable to load dashboard snapshot:', error);
     }
+}
+
+function safeText(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
 }
 
 function initCharts() {
@@ -96,10 +105,22 @@ function initCharts() {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                y: { min: 0, max: 1 }
+                x: {
+                    ticks: { maxTicksLimit: 6, autoSkip: true, color: '#64748b', font: { family: 'monospace', size: 10 } },
+                    grid: { color: 'rgba(148,163,184,0.08)' }
+                },
+                y: {
+                    min: 0, max: 1,
+                    ticks: { stepSize: 0.5, color: '#64748b', font: { family: 'monospace', size: 10 } },
+                    grid: { color: 'rgba(148,163,184,0.08)' }
+                }
             },
             plugins: {
-                legend: { position: 'top', labels: { boxWidth: 12 } }
+                legend: {
+                    position: 'top',
+                    align: 'start',
+                    labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 18, padding: 14, color: '#cbd5e1', font: { size: 11, weight: '600' } }
+                }
             },
             animation: { duration: 0 }
         }
@@ -143,13 +164,22 @@ function connectWebSocket() {
         statusEl.textContent = 'System Active';
         statusEl.style.color = 'var(--color-defense)';
         document.querySelector('.pulse-dot').style.backgroundColor = 'var(--color-defense)';
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+        }, 15000);
     };
     
     ws.onclose = () => {
+        clearInterval(heartbeatTimer);
         statusEl.textContent = 'Connection Lost - Retrying...';
         statusEl.style.color = 'var(--color-attack)';
         document.querySelector('.pulse-dot').style.backgroundColor = 'var(--color-attack)';
         setTimeout(connectWebSocket, 5000); // Reconnect
+    };
+
+    ws.onerror = () => {
+        statusEl.textContent = 'Connection Lost - Retrying...';
     };
     
     ws.onmessage = (event) => {
@@ -175,6 +205,16 @@ function connectWebSocket() {
 }
 
 function handleEvent(event, renderFeed = true) {
+    const eventKey = [
+        event.timestamp || '',
+        event.source_ip || event.source || '',
+        event.endpoint || '',
+        event.attack_type || '',
+        event.action || ''
+    ].join('|');
+    if (eventKey !== '||||' && seenEventKeys.has(eventKey)) return;
+    if (eventKey !== '||||') seenEventKeys.add(eventKey);
+
     stats.totalEvents++;
     
     // Add to feed
@@ -182,6 +222,7 @@ function handleEvent(event, renderFeed = true) {
     
     const isAttack = event._ws_type === 'attack' || event.is_attack === true;
     const isMitigated = event.action === 'blocked' || event.action === 'block';
+    updateAttackPath(event);
     
     // Trigger 3D Effects
     if (isAttack) {
@@ -233,16 +274,13 @@ function addFeedItem(event) {
     
     const el = document.createElement('div');
     el.className = `feed-item ${typeClass}`;
-    const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[char]));
     el.innerHTML = `
         <div class="feed-header">
-            <span>${time}</span>
+            <span>${safeText(time)}</span>
             <span>${action}</span>
         </div>
-        <div class="feed-title">${safe(title)}</div>
-        <div class="feed-details">SRC: ${safe(source)} | DST: ${safe(event.endpoint || '/api')}</div>
+        <div class="feed-title">${safeText(title)}</div>
+        <div class="feed-details">SRC: ${safeText(source)} | DST: ${safeText(event.endpoint || '/api')}</div>
     `;
     
     feed.prepend(el);
@@ -271,7 +309,7 @@ function updateMetrics() {
     document.getElementById('val-ttd').textContent = avgTtd + 'ms';
     
     // Update Perf Chart
-    const now = new Date().toLocaleTimeString().split(' ')[0];
+    const now = `E${stats.totalEvents}`;
     perfData.labels.push(now);
     perfData.precision.push(precision);
     perfData.recall.push(recall);
@@ -281,11 +319,33 @@ function updateMetrics() {
         perfData.precision.shift();
         perfData.recall.shift();
     }
-    
+
     perfChart.data.labels = perfData.labels;
     perfChart.data.datasets[0].data = perfData.precision;
     perfChart.data.datasets[1].data = perfData.recall;
     perfChart.update();
+}
+
+function updateAttackPath(event) {
+    const title = event.is_attack ? (event.attack_type || 'Attack detected') : 'Legitimate traffic observed';
+    document.getElementById('path-title').textContent = title;
+    document.getElementById('path-outcome').textContent = (event.outcome || (event.action === 'blocked' ? 'BLOCKED' : 'ALLOWED')).replace('_', ' ');
+    document.getElementById('path-source').textContent = event.source_ip || '—';
+    document.getElementById('path-route').textContent = `${(event.decision_path || 'fast').toUpperCase()}${event.confidence ? ` · ${(event.confidence * 100).toFixed(0)}%` : ''}`;
+    document.getElementById('path-action').textContent = event.defense_action || event.action || 'observe';
+    document.getElementById('path-validation').textContent = event.validation || '—';
+    document.querySelectorAll('.pipeline-step').forEach((step, index) => {
+        step.classList.toggle('complete', index < 6);
+        step.classList.toggle('active', index === 5);
+    });
+    const timeline = document.getElementById('event-timeline');
+    if (timeline) {
+        const item = document.createElement('span');
+        item.className = event.is_attack ? 'timeline-event attack' : 'timeline-event benign';
+        item.textContent = `${event.attack_type || 'traffic'} · ${event.action || 'observe'}`;
+        timeline.prepend(item);
+        while (timeline.children.length > 5) timeline.lastElementChild.remove();
+    }
 }
 
 function updateThreatChart() {
@@ -319,14 +379,9 @@ function setupControls() {
                 
                 if (!res.ok) throw new Error('Simulation API failed');
                 
-                // Fallback testing if no backend connected (for visual testing)
-                if (window.location.protocol === 'file:') {
-                    triggerMockAttack(scenario);
-                }
-                
             } catch (err) {
-                console.warn("API Call Failed, triggering mock attack instead:", err);
-                triggerMockAttack(scenario);
+                document.getElementById('connection-status').textContent = 'Backend unavailable';
+                console.error("Simulation API failed; no synthetic event was rendered:", err);
             }
             
             setTimeout(() => {
@@ -363,21 +418,6 @@ function setupControls() {
     });
 }
 
-// Mock function for local testing without backend
-function triggerMockAttack(type) {
-    const isMitigated = Math.random() > 0.3;
-    handleEvent({
-        _ws_type: 'attack',
-        is_attack: true,
-        attack_type: type,
-        source_ip: `10.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*254)+1}`,
-        endpoint: '/login',
-        action: isMitigated ? 'blocked' : 'allowed',
-        severity: 'high',
-        ttd_ms: Math.floor(Math.random() * 50) + 10
-    });
-}
-
 // Handle metrics update from server
 function updateMetricsFromServer(data) {
     if (!data) return;
@@ -399,7 +439,7 @@ function updateAgentHealth(data) {
     document.getElementById('val-session-events').textContent = data.event_count ?? stats.totalEvents;
     document.getElementById('last-signal').textContent = data.last_event_at
         ? new Date(data.last_event_at).toLocaleTimeString()
-        : 'Waiting';
+        : 'Idle — no events';
 }
 
 function updateCampaignStatus(data) {
@@ -409,9 +449,10 @@ function updateCampaignStatus(data) {
     const events = data.events ?? 0;
     const maxRounds = data.max_rounds ?? data.rounds ?? 5;
     const maxEvents = data.max_events ?? 25;
-    const label = status === 'started' ? 'running' : status;
+    const label = status === 'started' ? 'RUNNING' : status.toUpperCase();
     const mode = data.execution_mode ||
         (data.simulation_only === false ? 'live HTTP' : 'simulation');
-    document.getElementById('campaign-status').textContent =
-        `Campaign ${label} · ${rounds}/${maxRounds} rounds · ${events}/${maxEvents} events · ${mode}`;
+    const el = document.getElementById('campaign-status');
+    el.textContent = `${label}  ·  ${rounds}/${maxRounds} ROUNDS  ·  ${events}/${maxEvents} EVENTS  ·  ${mode}`;
+    el.dataset.status = status;
 }
