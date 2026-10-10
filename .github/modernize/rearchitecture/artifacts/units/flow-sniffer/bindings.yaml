@@ -1,0 +1,15 @@
+unit: flow-sniffer
+bindings:
+  - type: listener
+    name: "CICFlowMeter interface eth0 and flows.csv"
+    source_loc: "flow_sniffer/sniffer.py:40"
+    target: "CICFlowMeter subprocess"
+    must_appear_in_target: true
+    notes: "Linux/container network capture assumption."
+runtime_config:
+  - key: BLUE_AGENT_URL
+    source_loc: "flow_sniffer/sniffer.py:8"
+    source: env
+    default_value: http://blue_agent:8000/api/netflow
+    must_appear_in_target: true
+    notes: "Destination for flow events."

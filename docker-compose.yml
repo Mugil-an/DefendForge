@@ -9,6 +9,8 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - blue_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -18,8 +20,6 @@ services:
   target_app:
     build:
       context: ./target_app
-    ports:
-      - "5000:5000"
     environment:
       FLASK_ENV: development
       FLASK_DEBUG: 1
@@ -31,6 +31,35 @@ services:
       timeout: 5s
       retries: 12
     restart: always
+    networks:
+      - target_internal
+      - user_net
+      - blue_net
+
+  target_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      UPSTREAM_URL: http://target_app:5000
+      BLUE_AGENT_URL: http://blue_agent:8000/api/events
+      TARGET_ID: default
+      PROVENANCE_SECRET: ${PROVENANCE_SECRET:-local-development-secret}
+    depends_on:
+      target_app:
+        condition: service_healthy
+      blue_agent:
+        condition: service_healthy
+    command: ["uvicorn", "target_gateway.proxy:app", "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - ./rules:/app/rules:ro
+    networks:
+      - user_net
+      - red_net
+      - target_internal
+      - blue_net
 
   minio:
     image: elestio/minio:latest
@@ -42,6 +71,8 @@ services:
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-change-me-minio}
     volumes:
       - minio_data:/data
+    networks:
+      - blue_net
     command: server /data --console-address ":9001"
 
   elasticsearch:
@@ -54,6 +85,8 @@ services:
       - "9200:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
+    networks:
+      - blue_net
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.10.2
@@ -84,10 +117,12 @@ services:
       LLM_MODEL: llama3
       LLM_API_KEY: dummy
       PPO_MODEL_PATH: models/ppo_policy.zip
-      DETECTION_MODEL_PATH: models/isolation_forest.joblib
-      TARGET_APP_URL: http://target_app:5000
-      VALIDATION_HEALTH_URL: http://target_app:5000/health
-      RED_TARGET_URL: http://target_app:5000
+      DETECTION_MODEL_PATH: models/random_forest_24.joblib
+      TARGET_APP_URL: http://target_gateway:8080
+      VALIDATION_HEALTH_URL: http://target_gateway:8080/health
+      RED_TARGET_URL: http://target_gateway:8080
+      TARGET_MANIFEST_DIR: /app/targets
+      PROVENANCE_SECRET: ${PROVENANCE_SECRET:-local-development-secret}
     depends_on:
       db:
         condition: service_healthy
@@ -103,12 +138,15 @@ services:
       - ./target_app:/app/target_app
       - ./rules:/app/rules
       - ./models:/app/models
+    networks:
+      - blue_net
+      - target_internal
     command: ["uvicorn", "blue_agent.api.routes:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
       timeout: 5s
-      retries: 12
+      retries: 30
 
   red_agent:
     build:
@@ -120,7 +158,9 @@ services:
       RED_CAMPAIGN_EVENTS: 25
       RED_SIMULATION_ONLY: "false"
       RED_REQUEST_TIMEOUT: 5
-      RED_TARGET_URL: http://target_app:5000
+      RED_TARGET_URL: http://target_gateway:8080
+      TARGET_MANIFEST_DIR: /app/targets
+      PROVENANCE_SECRET: ${PROVENANCE_SECRET:-local-development-secret}
     depends_on:
       blue_agent:
         condition: service_healthy
@@ -130,9 +170,32 @@ services:
       - ./target_app:/app/target_app
       - ./rules:/app/rules
       - ./models:/app/models
+    networks:
+      - red_net
+      - blue_net
     command: ["python", "-m", "red_agent.container_runner"]
+
+  flow_sniffer:
+    build:
+      context: ./flow_sniffer
+    network_mode: "service:target_app"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - BLUE_AGENT_URL=http://blue_agent:8000/api/netflow
+    depends_on:
+      - target_app
+      - blue_agent
 
 volumes:
   pgdata:
   minio_data:
   es_data:
+
+networks:
+  user_net:
+  red_net:
+  blue_net:
+  target_internal:
+    internal: true

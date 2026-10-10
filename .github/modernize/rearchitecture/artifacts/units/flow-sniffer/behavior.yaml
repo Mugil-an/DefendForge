@@ -1,0 +1,26 @@
+unit: flow-sniffer
+side_effects:
+  - source_loc: "flow_sniffer/sniffer.py:21"
+    effect: "Runs CICFlowMeter and tails flows.csv."
+    must_preserve: true
+  - source_loc: "flow_sniffer/sniffer.py:28"
+    effect: "Forwards each parsed flow to Blue Agent."
+    must_preserve: true
+branches:
+  - source_loc: "flow_sniffer/sniffer.py:24"
+    condition: "CSV row field count differs from header count"
+    behavior: "Skip the row."
+    must_preserve: true
+error_paths:
+  - source_loc: "flow_sniffer/sniffer.py:31"
+    trigger: "Blue Agent request fails"
+    outcome: "Print forwarding failure and continue tailing."
+    contract: "No retry contract beyond the next flow."
+    must_preserve: true
+concurrency:
+  model: thread-pool
+  tx_boundary:
+    source_loc: "flow_sniffer/sniffer.py:34"
+    scope: "Subprocess and CSV tailing thread run concurrently."
+    isolation: "N/A"
+    must_preserve: true

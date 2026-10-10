@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
+from blue_agent.memory.repository import MemoryRepository
 
 
 @pytest.fixture
@@ -54,3 +55,28 @@ class TestAPIEndpoints:
         payload = {"events": [{"source": "10.0.0.1", "endpoint": "/login", "method": "POST"}]}
         response = client.post("/api/traffic", json=payload)
         assert response.status_code == 200
+
+    def test_gateway_event_is_durable_and_correlated(self, client, monkeypatch):
+        import blue_agent.api.routes as routes
+
+        repository = MemoryRepository(db_url="sqlite:///:memory:")
+        monkeypatch.setattr(routes, "_event_repository", repository)
+        payload = {
+            "event_id": "evt-api-1",
+            "request_id": "req-api-1",
+            "campaign_id": "campaign-api-1",
+            "target_id": "todo-app",
+            "source_kind": "red",
+            "method": "GET",
+            "path": "/todos",
+            "status_code": 403,
+            "timestamp": 1700000000,
+        }
+        response = client.post("/api/events", json=payload)
+        assert response.status_code == 200
+
+        stored = repository.get_events(limit=1)[0]
+        assert stored.event_id == "evt-api-1"
+        assert stored.source_provenance["campaign_id"] == "campaign-api-1"
+        assert stored.prediction_is_attack is True
+        assert stored.patch_id is None

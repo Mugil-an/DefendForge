@@ -1,0 +1,24 @@
+{
+  "name": "default",
+  "service": "target_gateway",
+  "base_url": "http://target_gateway:8080",
+  "health": {"path": "/health"},
+  "discovery": {
+    "openapi_path": "/openapi.json",
+    "crawl_enabled": true,
+    "max_depth": 2
+  },
+  "limits": {
+    "allowed_methods": ["GET", "POST", "PUT", "PATCH"]
+  },
+  "validation": {
+    "command": ["pytest", "tests"],
+    "working_dir": ".",
+    "timeout": 300
+  },
+  "audit": {
+    "source_path": "/target",
+    "tools": ["pip-audit", "npm-audit", "semgrep"],
+    "timeout_seconds": 300
+  }
+}

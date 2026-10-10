@@ -1,0 +1,26 @@
+unit: blue-agent-api
+side_effects:
+  - source_loc: "blue_agent/api/routes.py:403"
+    effect: "Processes traffic and broadcasts events to WebSocket clients."
+    must_preserve: true
+  - source_loc: "blue_agent/api/routes.py:430"
+    effect: "Runs bounded Red campaign, feeds traffic to Blue Agent, and streams campaign/attack events."
+    must_preserve: true
+branches:
+  - source_loc: "blue_agent/api/routes.py:433"
+    condition: "rounds or max_events outside configured bounds"
+    behavior: "Return HTTP 422."
+    must_preserve: true
+error_paths:
+  - source_loc: "blue_agent/api/routes.py:492"
+    trigger: "Autonomous campaign exception"
+    outcome: "Broadcast failed campaign and return HTTP 500."
+    contract: "HTTP 500 detail Autonomous campaign failed"
+    must_preserve: true
+concurrency:
+  model: async
+  tx_boundary:
+    source_loc: "blue_agent/api/routes.py:403"
+    scope: "No database transaction; event processing and WebSocket broadcast occur in one request coroutine."
+    isolation: "N/A"
+    must_preserve: true

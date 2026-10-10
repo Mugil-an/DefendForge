@@ -1,0 +1,23 @@
+unit: green-live-traffic
+side_effects:
+  - source_loc: "green_agent/__init__.py:88"
+    effect: "Sends benign HTTP requests and records traffic events."
+    must_preserve: true
+branches:
+  - source_loc: "green_agent/__init__.py:116"
+    condition: "Random action selection"
+    behavior: "Call one of the hard-coded browse/search/greet/health/list_posts paths."
+    must_preserve: true
+error_paths:
+  - source_loc: "green_agent/__init__.py:147"
+    trigger: "HTTP request failure"
+    outcome: "Drop the event and log at debug level."
+    contract: "No exception is propagated to the traffic loop."
+    must_preserve: true
+concurrency:
+  model: sync
+  tx_boundary:
+    source_loc: "green_agent/__init__.py:79"
+    scope: "Sequential request loop."
+    isolation: "N/A"
+    must_preserve: true

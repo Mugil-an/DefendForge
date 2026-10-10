@@ -17,7 +17,7 @@ import sqlite3
 import subprocess
 from functools import wraps
 
-from flask import Flask, g, jsonify, redirect, request, session
+from flask import Flask, g, jsonify, redirect, request, session, render_template
 
 app = Flask(__name__)
 app.secret_key = "super_secret_key_123"  # B105: hardcoded password
@@ -64,6 +64,10 @@ def init_db():
             body TEXT NOT NULL,
             FOREIGN KEY (post_id) REFERENCES posts(id)
         );
+        CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL
+        );
         INSERT OR IGNORE INTO users (username, password, role) VALUES ('admin', 'admin123', 'admin');
         INSERT OR IGNORE INTO users (username, password, role) VALUES ('user1', 'password', 'user');
     """)
@@ -92,6 +96,39 @@ def login_required(f):
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/todos", methods=["GET"])
+def get_todos():
+    db = get_db()
+    results = db.execute("SELECT * FROM todos ORDER BY id DESC").fetchall()
+    return jsonify([dict(r) for r in results])
+
+# VULN: SQL Injection
+@app.route("/todos", methods=["POST"])
+def add_todo():
+    data = request.get_json()
+    title = data.get("title", "")
+    db = get_db()
+    # Deliberately vulnerable to SQLi
+    db.execute(f"INSERT INTO todos (title) VALUES ('{title}')")
+    db.commit()
+    # Get the last inserted to return
+    new_todo = db.execute("SELECT * FROM todos ORDER BY id DESC LIMIT 1").fetchone()
+    return jsonify(dict(new_todo)), 201
+
+# VULN: SQL Injection
+@app.route("/todos/<todo_id>", methods=["DELETE"])
+def delete_todo(todo_id):
+    db = get_db()
+    # Deliberately vulnerable to SQLi
+    db.execute(f"DELETE FROM todos WHERE id={todo_id}")
+    db.commit()
+    return jsonify({"success": True})
 
 
 # VULN: SQL Injection — string formatting in query

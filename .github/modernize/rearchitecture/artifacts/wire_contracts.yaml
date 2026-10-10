@@ -1,0 +1,65 @@
+contracts:
+  - name: target-health
+    unit: target-app-http
+    type: rest
+    stability: frozen
+    source_loc: "target_app/app.py:50"
+    contract:
+      method: GET
+      path: /health
+      request: none
+      response: "{status: ok}"
+      error: Flask HTTP error
+      auth: none
+    target_contract:
+      method: "GET /health"
+      notes: "Must return a successful JSON health response for Blue health checks."
+    semantic_divergence: []
+  - name: target-todos
+    unit: target-app-http
+    type: rest
+    stability: frozen
+    source_loc: "target_app/app.py:54"
+    contract:
+      method: "GET|POST|DELETE"
+      path: "/todos[/<int:todo_id>]"
+      request: "POST title in JSON or form field"
+      response: "todo list, created todo, or {message: Deleted}"
+      error: "POST without title -> 400 {error: Title is required}"
+      auth: none
+    target_contract:
+      method: "Preserve the existing Flask route/method/status/body shapes."
+      notes: "SQLite writes are committed synchronously."
+    semantic_divergence: []
+  - name: traffic-ingestion
+    unit: blue-agent-api
+    type: rest
+    stability: must_preserve
+    source_loc: "blue_agent/api/routes.py:403"
+    contract:
+      method: POST
+      path: /api/traffic
+      request: "TrafficBatch.events"
+      response: "MetricsSnapshot"
+      error: "500 on processing failure"
+      auth: none
+    target_contract:
+      method: "POST /api/traffic with event batch -> metrics snapshot"
+      notes: "Each event is broadcast to dashboard WebSocket clients."
+    semantic_divergence: []
+  - name: netflow-ingestion
+    unit: flow-sniffer
+    type: rest
+    stability: must_preserve
+    source_loc: "flow_sniffer/sniffer.py:28"
+    contract:
+      method: POST
+      path: /api/netflow
+      request: "CICFlowMeter CSV row as JSON"
+      response: "{status: ok}"
+      error: "HTTP client failure is logged by sniffer"
+      auth: none
+    target_contract:
+      method: "POST /api/netflow with normalized flow fields"
+      notes: "Blue API accepts title-case or snake-case source/destination fields."
+    semantic_divergence: []

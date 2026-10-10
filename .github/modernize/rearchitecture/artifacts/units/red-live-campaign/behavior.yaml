@@ -1,0 +1,27 @@
+unit: red-live-campaign
+side_effects:
+  - source_loc: "red_agent/live_campaign.py:70"
+    effect: "Sends real HTTP GET/POST requests and records traffic/truth events."
+    must_preserve: true
+branches:
+  - source_loc: "red_agent/live_campaign.py:37"
+    condition: "Target is not HTTP(S) on an allowlisted local host"
+    behavior: "Reject campaign construction."
+    must_preserve: true
+  - source_loc: "red_agent/live_campaign.py:76"
+    condition: "HTTP request fails"
+    behavior: "Record response code 599 and error text."
+    must_preserve: true
+error_paths:
+  - source_loc: "red_agent/live_campaign.py:37"
+    trigger: "Remote/non-HTTP target URL"
+    outcome: "Raise ValueError."
+    contract: "live campaigns are restricted to the bundled local target"
+    must_preserve: true
+concurrency:
+  model: sync
+  tx_boundary:
+    source_loc: "red_agent/live_campaign.py:68"
+    scope: "Campaign state updates occur synchronously per bounded event."
+    isolation: "N/A"
+    must_preserve: true

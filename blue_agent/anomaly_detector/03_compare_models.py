@@ -9,7 +9,7 @@ from sklearn.neighbors import LocalOutlierFactor
 from sklearn.cluster import KMeans
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
 from sklearn.kernel_approximation import Nystroem
 
 from preprocess import load_split
@@ -37,6 +37,7 @@ def evaluate(scores_all, threshold, labels):
             recall_score(actual_attacks, predictions, zero_division=0)
         ),
         "attack_f1": float(f1_score(actual_attacks, predictions, zero_division=0)),
+        "accuracy": float(accuracy_score(actual_attacks, predictions)),
     }
 
 
@@ -185,14 +186,15 @@ def main():
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     x = np.arange(len(results_df))
-    width = 0.25
-
     # Chart 1: Performance
     ax1 = axes[0]
-    ax1.bar(x - width, results_df["attack_f1"] * 100, width, label="F1 Score")
-    ax1.bar(x, results_df["attack_precision"] * 100, width, label="Precision")
-    ax1.bar(x + width, results_df["attack_recall"] * 100, width, label="Recall")
-    ax1.set_ylabel("Percentage (%)")
+    width = 0.2
+    ax1.bar(x - width*1.5, results_df["accuracy"], width, label="Accuracy")
+    ax1.bar(x - width*0.5, results_df["attack_f1"], width, label="F1 Score")
+    ax1.bar(x + width*0.5, results_df["attack_precision"], width, label="Precision")
+    ax1.bar(x + width*1.5, results_df["attack_recall"], width, label="Recall")
+    ax1.set_ylabel("Score (0 to 1)")
+    ax1.set_ylim(0, 1)
     ax1.set_title("Detection Performance (Fixed 5% FPR)")
     ax1.set_xticks(x)
     ax1.set_xticklabels(results_df["model"], rotation=25, ha="right")

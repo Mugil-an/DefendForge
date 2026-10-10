@@ -1,0 +1,9 @@
+unit: blue-agent-api
+commit: false
+candidate_splits:
+  - id: "blue_agent/api/routes.py:403-522"
+    drivers: [concern_split, execution_model_split]
+    rationale: "Traffic ingestion, campaign orchestration, audit, and dashboard reads have different request lifecycles and failure semantics."
+    source_slice:
+      file: blue_agent/api/routes.py
+      lines: [403, 522]

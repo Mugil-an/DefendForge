@@ -1,0 +1,16 @@
+modules:
+  - name: target-configuration
+    kind: config
+    source_loc: "blue_agent/config.py:132"
+    used_by_units: [blue-agent-api, red-live-campaign, green-live-traffic]
+    fields:
+      - name: target_app_url
+        type: str
+      - name: target_app_path
+        type: str
+      - name: health_check_url
+        type: str
+    god_class: false
+    split_candidate: false
+    migration_strategy: wrap
+    notes: "Environment-backed target location and health configuration."

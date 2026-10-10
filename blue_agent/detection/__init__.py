@@ -13,6 +13,7 @@ from blue_agent.detection.autoencoder import AutoencoderDetector
 from blue_agent.detection.cicids_flow_detector import CICIDSFlowDetector
 from blue_agent.detection.feature_extractor import extract_features, FEATURE_NAMES, NUM_FEATURES
 from blue_agent.detection.isolation_forest import IsolationForestDetector
+from blue_agent.detection.random_forest import RandomForestDetector
 
 __all__ = [
     "AlertManager",
@@ -20,6 +21,7 @@ __all__ = [
     "AutoencoderDetector",
     "CICIDSFlowDetector",
     "IsolationForestDetector",
+    "RandomForestDetector",
     "extract_features",
     "FEATURE_NAMES",
     "NUM_FEATURES",

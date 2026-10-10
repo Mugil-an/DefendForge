@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +24,9 @@ from blue_agent.schemas import (
 )
 from blue_agent.monitoring.health import HealthChecker
 from blue_agent.api.ws_manager import ws_manager
+from blue_agent.events import classify_event
+from blue_agent.memory.repository import MemoryRepository
+from blue_agent.schemas import SecurityEventRecord
 
 log = get_logger("api.routes")
 
@@ -53,12 +58,173 @@ def read_root():
 def favicon():
     return Response(status_code=204)
 
+_cicids_detector = None
+def get_cicids_detector():
+    global _cicids_detector
+    if _cicids_detector is None:
+        from blue_agent.detection.cicids_flow_detector import CICIDSFlowDetector
+        _cicids_detector = CICIDSFlowDetector()
+        try:
+            _cicids_detector.load()
+        except Exception as e:
+            log.error("Failed to load CICIDS model", error=str(e))
+    return _cicids_detector
+
+@app.post("/api/netflow")
+async def receive_netflow(flow_data: dict):
+    dst_port = flow_data.get("Dst Port", flow_data.get("dst_port", "5000"))
+    src_ip = flow_data.get("Src IP", flow_data.get("src_ip", "unknown"))
+    protocol = flow_data.get("Protocol", flow_data.get("protocol", "TCP"))
+    
+    log.info("netflow_received", dest_port=dst_port, src_ip=src_ip)
+    
+    # Use the CICIDSFlowDetector for network-layer anomaly detection
+    is_attack = False
+    detector = get_cicids_detector()
+    if detector.is_fitted:
+        import pandas as pd
+        df = pd.DataFrame([flow_data])
+        df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
+        try:
+            res = detector.predict_batch(df)[0]
+            is_attack = res.is_anomaly
+        except Exception as e:
+            log.warning("cicids_predict_failed", error=str(e))
+        
+    ws_event = _decorate_event({
+        "source_ip": src_ip,
+        "endpoint": f"Port {dst_port} ({protocol})",
+        "method": "NETFLOW",
+        "is_attack": is_attack,
+        "attack_type": None,
+        "severity": "low",
+        "action": "observe",
+        "timestamp": time.time(),
+        "rationale": "Live flow captured by network sniffer",
+        "exploit_success": False,
+        "round": 0,
+    }, None)
+    
+    _memory_log.insert(0, ws_event)
+    if len(_memory_log) > 200:
+        del _memory_log[200:]
+        
+    await ws_manager.broadcast_event("attack" if is_attack else "traffic", ws_event)
+    
+    return {"status": "ok"}
+
+
+@app.post("/api/events")
+async def receive_gateway_event(event: dict) -> Dict[str, Any]:
+    """Receive normalized user/Red events from the local target gateway."""
+    normalized = classify_event(event)
+    agent = _get_agent()
+    normalized_input = [{
+        "source": normalized.get("source_kind", "unknown"),
+        "endpoint": normalized.get("path", "/"),
+        "method": normalized.get("method", "GET"),
+        "is_attack": normalized["is_attack"],
+        "attack_type": normalized.get("attack_type"),
+        "source_kind": normalized["source_kind"],
+        "campaign_id": normalized.get("campaign_id"),
+        "response_code": normalized.get("status_code", 0),
+        "response_time_ms": normalized.get("duration_ms", 0),
+        "body_size": normalized.get("response_size", 0),
+        "event_id": normalized.get("event_id"),
+        "features": {"finding_id": normalized.get("finding_id")},
+    }]
+    agent.process_traffic(normalized_input)
+    details = next(
+        (item for item in getattr(agent, "last_round_details", [])
+         if item.get("event_id") == normalized.get("event_id")),
+        {},
+    )
+    event_record = SecurityEventRecord(
+        event_id=normalized.get("event_id") or str(uuid.uuid4()),
+        occurred_at=_event_datetime(normalized.get("timestamp")),
+        target_id=normalized.get("target_id", ""),
+        method=normalized.get("method", "GET"),
+        path=normalized.get("path", "/"),
+        query=normalized.get("query", ""),
+        status_code=normalized.get("status_code"),
+        duration_ms=normalized.get("duration_ms"),
+        request_size=normalized.get("request_size"),
+        response_size=normalized.get("response_size"),
+        source_kind=normalized["source_kind"],
+        source_provenance={
+            "source_kind": normalized["source_kind"],
+            "campaign_id": normalized.get("campaign_id"),
+            "request_id": normalized.get("request_id"),
+        },
+        campaign_id=normalized.get("campaign_id"),
+        request_id=normalized.get("request_id"),
+        finding_id=details.get("finding_id") or normalized.get("finding_id"),
+        patch_id=details.get("patch_id"),
+        validation_id=details.get("validation_id"),
+        prediction_is_attack=normalized["is_attack"],
+        prediction_attack_type=normalized.get("attack_type"),
+        prediction_confidence=details.get("confidence"),
+        raw_event=normalized,
+    )
+    _get_event_repository().store_event(event_record)
+    _memory_log.insert(0, _decorate_event({
+        "source_ip": normalized.get("source_kind", "unknown"),
+        "endpoint": normalized.get("path", "/"),
+        "method": normalized.get("method", "GET"),
+        "is_attack": normalized["is_attack"],
+        "attack_type": normalized.get("attack_type"),
+        "severity": "high" if normalized["is_attack"] else "low",
+        "action": "blocked" if normalized["is_attack"] else "observe",
+        "timestamp": normalized.get("timestamp", time.time()),
+        "request_id": normalized.get("request_id"),
+        "source_kind": normalized["source_kind"],
+        "campaign_id": normalized.get("campaign_id"),
+    }))
+    del _memory_log[200:]
+    await ws_manager.broadcast_event(
+        "attack" if normalized["is_attack"] else "traffic",
+        _memory_log[0],
+    )
+    return {"status": "ok", "source_kind": normalized["source_kind"], "event_id": normalized.get("event_id")}
+
+
+def _event_datetime(value: Any) -> datetime:
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
+
 # ---------------------------------------------------------------------------
 # Lazy Agent Initialization (with SQLite fallback for local dev)
 # ---------------------------------------------------------------------------
 _agent = None
 _red_agent = None
 _memory_log: List[Dict[str, Any]] = []  # In-memory event log for dashboard
+_event_repository = None
+
+
+def _get_event_repository() -> MemoryRepository:
+    """Use configured durable storage, falling back to a local SQLite file."""
+    global _event_repository
+    if _event_repository is None:
+        try:
+            _event_repository = MemoryRepository()
+        except Exception as exc:
+            log.warning("event_db_unavailable_using_sqlite", error=str(exc))
+            sqlite_path = Path(__file__).resolve().parents[2] / "data" / "blue_memory.db"
+            sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+            _event_repository = MemoryRepository(db_url=f"sqlite:///{sqlite_path}")
+    return _event_repository
+
+
+@app.get("/api/security-events")
+def get_security_events(limit: int = Query(100, ge=1, le=1000)) -> List[Dict[str, Any]]:
+    """Return normalized gateway observations from durable storage."""
+    return [event.model_dump(mode="json") for event in _get_event_repository().get_events(limit)]
 
 RESEARCH_NOVELTY = [
     {
@@ -151,8 +317,9 @@ def _decorate_event(event: Dict[str, Any], detail: Dict[str, Any] | None = None)
         "detected": detected,
         "action": displayed_action,
         "pipeline": ["RECON", "DETECT", "ROUTE", "REMEDIATE", "VALIDATE", "HARDEN"],
-        "decision_path": detail.get("decision_path", "fast"),
-        "confidence": detail.get("confidence", 0.0),
+        "decision_path": detail.get("decision_path", "unavailable"),
+        "confidence": detail.get("confidence"),
+        "decision_reason": detail.get("decision_reason"),
         "llm_escalation": detail.get("llm_escalation", False),
         "defense_action": detail.get("action", event.get("action", "observe")),
         "remediation": detail.get("remediation", ""),
@@ -189,15 +356,16 @@ class _LightweightAgent:
     def __init__(self):
         from blue_agent.metrics.tracker import MetricsTracker
         from blue_agent.detection.alert_manager import AlertManager
-        from blue_agent.detection.isolation_forest import IsolationForestDetector
+        from blue_agent.detection.random_forest import RandomForestDetector
         from blue_agent.remediation.patch_generator import PatchGenerator
         from blue_agent.hardening.rule_manager import RuleManager
 
         self.metrics = MetricsTracker()
-        detector = IsolationForestDetector()
+        detector = RandomForestDetector()
         model_candidates = [
             Path(settings.detection.model_path),
             Path(__file__).resolve().parents[1] / "anomaly_detector" / "models" / "isolation_forest.joblib",
+            Path(__file__).resolve().parents[2] / "models" / "random_forest_24.joblib",
         ]
         for model_path in model_candidates:
             if model_path.exists():
@@ -240,13 +408,14 @@ class _LightweightAgent:
                 if bool(event.get("is_attack", event.get("attack_type")))
             ]
             self.last_round_details = [{
-                "decision_path": "fast",
-                "confidence": 1.0,
+                "decision_path": "fallback",
+                "confidence": None,
                 "llm_escalation": False,
                 "action": "block_source_ip",
                 "remediation": "blocked",
                 "validation": "NOT_REQUIRED",
                 "outcome": "SUCCESS",
+                "decision_reason": "detector_schema_mismatch",
                 "hardening": [],
                 "phase": "COMPLETE",
             } for _ in attack_events]
@@ -268,13 +437,14 @@ class _LightweightAgent:
             # Hardening
             self.hardening.derive_rules_from_event(event)
             self.last_round_details.append({
-                "decision_path": "fast",
+                "decision_path": "fallback",
                 "confidence": 0.8,
                 "llm_escalation": False,
                 "action": "apply_known_patch" if patch else "update_security_rule",
                 "remediation": "validated_patch" if patch else "update_security_rule",
                 "validation": "ACCEPT" if patch else "NOT_REQUIRED",
                 "outcome": "SUCCESS",
+                "decision_reason": "detector_fallback",
                 "hardening": [],
                 "phase": "COMPLETE",
             })
@@ -303,13 +473,6 @@ class AutonomousCampaignRequest(BaseModel):
 class FullAutonomousRequest(BaseModel):
     rounds: int = 5
     events_per_round: int = 10
-    use_llm: bool = True
-
-
-class CoEvolutionRequest(BaseModel):
-    rounds: int = 5
-    attacks_per_round: int = 10
-    benign_per_round: int = 5
     use_llm: bool = True
 
 
@@ -466,31 +629,28 @@ async def start_full_autonomous_campaign(request: FullAutonomousRequest) -> Dict
         "use_llm": request.use_llm,
     })
 
-    try:
-        result = red.run_full_autonomous_campaign(
-            rounds=request.rounds,
-            max_events_per_round=request.events_per_round,
-            use_llm=request.use_llm,
-        )
+    loop = asyncio.get_running_loop()
 
-        # Process Red traffic through Blue Agent
+    async def publish_round(
+        traffic: list[dict[str, Any]],
+        ground_truth: list[dict[str, Any]],
+        summary: dict[str, Any],
+    ) -> None:
         blue_agent = _get_agent()
-        if result.traffic:
-            # Enrich with labels
-            enriched = []
-            for evt, truth in zip(result.traffic, result.ground_truth):
-                enriched.append({
-                    **evt,
-                    "is_attack": truth.get("is_attack", True),
-                    "attack_type": truth.get("attack_type"),
-                    "severity": truth.get("severity", "low"),
-                })
+        enriched = [
+            {
+                **event,
+                "is_attack": truth.get("is_attack", True),
+                "attack_type": truth.get("attack_type"),
+                "severity": truth.get("severity", "low"),
+            }
+            for event, truth in zip(traffic, ground_truth)
+        ]
+        if enriched:
             blue_agent.process_traffic(enriched)
-
-        # Broadcast events to WebSocket
         details = getattr(blue_agent, "last_round_details", [])
-        for index, event in enumerate(result.traffic):
-            truth = result.ground_truth[index] if index < len(result.ground_truth) else {}
+        for index, event in enumerate(traffic):
+            truth = ground_truth[index] if index < len(ground_truth) else {}
             ws_event = _decorate_event({
                 "source_ip": event.get("source", "unknown"),
                 "endpoint": event.get("endpoint", "/"),
@@ -499,7 +659,10 @@ async def start_full_autonomous_campaign(request: FullAutonomousRequest) -> Dict
                 "attack_type": truth.get("attack_type"),
                 "severity": truth.get("severity", "low"),
                 "action": "blocked",
-                "timestamp": event.get("timestamp", ""),
+                "timestamp": event.get("timestamp", time.time()),
+                "request_id": event.get("request_id"),
+                "campaign_id": event.get("campaign_id"),
+                "response_code": event.get("response_code"),
                 "rationale": truth.get("rationale", ""),
                 "exploit_success": truth.get("exploit_success", False),
                 "round": truth.get("round", 0),
@@ -507,9 +670,31 @@ async def start_full_autonomous_campaign(request: FullAutonomousRequest) -> Dict
             _memory_log.insert(0, ws_event)
             await ws_manager.broadcast_event("attack", ws_event)
             await asyncio.sleep(0.05)
-
         if len(_memory_log) > 200:
             del _memory_log[200:]
+        await ws_manager.broadcast_event("campaign", {
+            **red.get_campaign_status(),
+            "status": "running",
+        })
+
+    def round_callback(
+        traffic: list[dict[str, Any]],
+        ground_truth: list[dict[str, Any]],
+        summary: dict[str, Any],
+    ) -> None:
+        asyncio.run_coroutine_threadsafe(
+            publish_round(traffic, ground_truth, summary),
+            loop,
+        ).result()
+
+    try:
+        result = await asyncio.to_thread(
+            red.run_full_autonomous_campaign,
+            rounds=request.rounds,
+            max_events_per_round=request.events_per_round,
+            use_llm=request.use_llm,
+            round_callback=round_callback,
+        )
 
         status = red.get_campaign_status()
         await ws_manager.broadcast_event("campaign", {**status, "status": "completed"})
@@ -529,69 +714,6 @@ async def start_full_autonomous_campaign(request: FullAutonomousRequest) -> Dict
         traceback.print_exc()
         await ws_manager.broadcast_event("campaign", {"status": "failed", "error": str(e)})
         raise HTTPException(status_code=500, detail=f"Full autonomous campaign failed: {e}")
-
-
-@app.post("/api/coevolution")
-async def run_coevolution(request: CoEvolutionRequest) -> Dict[str, Any]:
-    """
-    Run a full adversarial co-evolution campaign:
-    - Multiple rounds of Red ↔ Blue competition
-    - Green Agent background traffic for realistic detection
-    - Metrics tracked over rounds showing improvement
-    - Red adapts, Blue improves
-    """
-    if request.rounds < 1 or request.rounds > 20:
-        raise HTTPException(status_code=422, detail="rounds must be between 1 and 20")
-
-    await ws_manager.broadcast_event("coevolution", {
-        "status": "started",
-        "rounds": request.rounds,
-        "attacks_per_round": request.attacks_per_round,
-        "benign_per_round": request.benign_per_round,
-    })
-
-    try:
-        from coevolution import CoEvolutionEngine
-        engine = CoEvolutionEngine(
-            target_url=str(os.environ.get("RED_TARGET_URL", "http://target_app:5000")),
-            max_rounds=request.rounds,
-            attacks_per_round=request.attacks_per_round,
-            benign_per_round=request.benign_per_round,
-            use_llm=request.use_llm,
-        )
-        result = engine.run()
-
-        # Broadcast results
-        for round_result in result.round_results:
-            await ws_manager.broadcast_event("coevolution_round", {
-                "round": round_result.round_number,
-                "attacks_launched": round_result.attacks_launched,
-                "attacks_detected": round_result.attacks_detected,
-                "exploit_rate": (
-                    round_result.successful_exploits / max(1, round_result.attacks_launched)
-                ),
-                "detection_rate": (
-                    round_result.attacks_detected / max(1, round_result.attacks_launched)
-                ),
-                "time_to_detect_ms": round(round_result.time_to_detect_ms, 2),
-                "time_to_remediate_ms": round(round_result.time_to_remediate_ms, 2),
-                "patches_accepted": round_result.patches_accepted,
-                "patches_rolled_back": round_result.patches_rolled_back,
-            })
-            await asyncio.sleep(0.1)
-
-        await ws_manager.broadcast_event("coevolution", {
-            "status": "completed",
-            "summary": result.blue_improvement_summary,
-        })
-
-        return result.to_dict()
-    except Exception as e:
-        log.error("coevolution_failed", error=str(e))
-        import traceback
-        traceback.print_exc()
-        await ws_manager.broadcast_event("coevolution", {"status": "failed", "error": str(e)})
-        raise HTTPException(status_code=500, detail=f"Co-evolution failed: {e}")
 
 
 @app.post("/api/audit")

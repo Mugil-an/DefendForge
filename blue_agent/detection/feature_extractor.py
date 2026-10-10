@@ -235,6 +235,7 @@ def extract_features(event: Dict[str, Any]) -> np.ndarray:
     features[22] = 1.0 if 400 <= int(event.get("response_code", 200)) < 500 else 0.0
     features[23] = 1.0 if int(event.get("response_code", 200)) >= 500 else 0.0
 
+    log.info("extracted_features", features=dict(zip(FEATURE_NAMES, features.tolist())))
     return features
 
 

@@ -194,14 +194,6 @@ function connectWebSocket() {
                 updateCampaignStatus(msg.data);
                 return;
             }
-            if (msg.type === 'coevolution') {
-                updateCoevolutionStatus(msg.data);
-                return;
-            }
-            if (msg.type === 'coevolution_round') {
-                updateCoevolutionRound(msg.data);
-                return;
-            }
             // Unwrap the {type, data} envelope from our API
             const payload = msg.data || msg;
             payload._ws_type = msg.type; // 'attack' or 'traffic'
@@ -214,6 +206,7 @@ function connectWebSocket() {
 
 function handleEvent(event, renderFeed = true) {
     const eventKey = [
+        event.event_id || event.request_id || '',
         event.timestamp || '',
         event.source_ip || event.source || '',
         event.endpoint || '',
@@ -226,11 +219,12 @@ function handleEvent(event, renderFeed = true) {
     stats.totalEvents++;
     
     // Add to feed
-    if (renderFeed) addFeedItem(event);
+    if (renderFeed && (event._ws_type === 'attack' || event.is_attack)) addFeedItem(event);
+    if (renderFeed && (event._ws_type === 'traffic' && !event.is_attack)) addLiveTrafficItem(event);
     
     const isAttack = event._ws_type === 'attack' || event.is_attack === true;
     const isMitigated = event.action === 'blocked' || event.action === 'block';
-    updateAttackPath(event);
+    if (event.method !== 'NETFLOW') updateAttackPath(event);
     
     // Trigger 3D Effects
     if (isAttack) {
@@ -301,6 +295,36 @@ function addFeedItem(event) {
     }
 }
 
+let liveTrafficItems = [];
+function addLiveTrafficItem(event) {
+    const feed = document.getElementById('live-traffic-feed');
+    if (!feed) return;
+    
+    const time = new Date().toLocaleTimeString();
+    const source = event.source_ip || 'Unknown IP';
+    const action = event.is_attack ? 'BLOCKED' : 'ALLOWED';
+    const typeClass = event.is_attack ? 'attack' : 'benign';
+    
+    const el = document.createElement('div');
+    el.className = `feed-item ${typeClass}`;
+    el.innerHTML = `
+        <div class="feed-header">
+            <span>${safeText(time)}</span>
+            <span>${action}</span>
+        </div>
+        <div class="feed-title">Live Flow Captured</div>
+        <div class="feed-details">SRC: ${safeText(source)} | DST: ${safeText(event.endpoint)}</div>
+    `;
+    
+    feed.prepend(el);
+    liveTrafficItems.unshift(el);
+    
+    if (liveTrafficItems.length > 50) {
+        const removed = liveTrafficItems.pop();
+        removed.remove();
+    }
+}
+
 function updateMetrics() {
     // Total Events
     document.getElementById('val-total-events').textContent = stats.totalEvents;
@@ -339,7 +363,11 @@ function updateAttackPath(event) {
     document.getElementById('path-title').textContent = title;
     document.getElementById('path-outcome').textContent = (event.outcome || (event.action === 'blocked' ? 'BLOCKED' : 'ALLOWED')).replace('_', ' ');
     document.getElementById('path-source').textContent = event.source_ip || '—';
-    document.getElementById('path-route').textContent = `${(event.decision_path || 'fast').toUpperCase()}${event.confidence ? ` · ${(event.confidence * 100).toFixed(0)}%` : ''}`;
+    const route = (event.decision_path || 'unavailable').toUpperCase();
+    const confidence = Number.isFinite(event.confidence)
+        ? ` · ${(event.confidence * 100).toFixed(0)}%`
+        : '';
+    document.getElementById('path-route').textContent = `${route}${confidence}`;
     document.getElementById('path-action').textContent = event.defense_action || event.action || 'observe';
     document.getElementById('path-validation').textContent = event.validation || '—';
     document.querySelectorAll('.pipeline-step').forEach((step, index) => {
@@ -400,30 +428,32 @@ function setupControls() {
     });
 
     const autonomousButton = document.getElementById('autonomous-campaign');
-    autonomousButton.addEventListener('click', async () => {
-        autonomousButton.disabled = true;
-        autonomousButton.textContent = 'Campaign running...';
-        updateCampaignStatus({ status: 'started', rounds: 5, max_events: 25 });
-        const apiUrl = window.location.protocol === 'file:'
-            ? 'http://localhost:8000/api/red/campaign/start'
-            : '/api/red/campaign/start';
-        try {
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rounds: 5, max_events: 25 })
-            });
-            if (!response.ok) throw new Error(`Campaign API failed (${response.status})`);
-            const result = await response.json();
-            updateCampaignStatus(result.campaign);
-        } catch (error) {
-            updateCampaignStatus({ status: 'failed' });
-            console.error('Autonomous campaign failed:', error);
-        } finally {
-            autonomousButton.disabled = false;
-            autonomousButton.textContent = '▶ Quick Campaign';
-        }
-    });
+    if (autonomousButton) {
+        autonomousButton.addEventListener('click', async () => {
+            autonomousButton.disabled = true;
+            autonomousButton.textContent = 'Campaign running...';
+            updateCampaignStatus({ status: 'started', rounds: 5, max_events: 25 });
+            const apiUrl = window.location.protocol === 'file:'
+                ? 'http://localhost:8000/api/red/campaign/start'
+                : '/api/red/campaign/start';
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rounds: 5, max_events: 25 })
+                });
+                if (!response.ok) throw new Error(`Campaign API failed (${response.status})`);
+                const result = await response.json();
+                updateCampaignStatus(result.campaign);
+            } catch (error) {
+                updateCampaignStatus({ status: 'failed' });
+                console.error('Autonomous campaign failed:', error);
+            } finally {
+                autonomousButton.disabled = false;
+                autonomousButton.textContent = '▶ Quick Campaign';
+            }
+        });
+    }
 
     const fullAutonomousBtn = document.getElementById('full-autonomous-campaign');
     if (fullAutonomousBtn) {
@@ -448,45 +478,23 @@ function setupControls() {
                 console.error('Full Autonomous campaign failed:', error);
             } finally {
                 fullAutonomousBtn.disabled = false;
-                fullAutonomousBtn.textContent = '🤖 Full Autonomous';
+                fullAutonomousBtn.textContent = '🚀 Start Autonomous Attack';
             }
         });
     }
 
-    const coevolutionBtn = document.getElementById('coevolution-campaign');
-    if (coevolutionBtn) {
-        coevolutionBtn.addEventListener('click', async () => {
-            coevolutionBtn.disabled = true;
-            coevolutionBtn.textContent = 'Running...';
-            const apiUrl = window.location.protocol === 'file:'
-                ? 'http://localhost:8000/api/coevolution'
-                : '/api/coevolution';
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rounds: 5, attacks_per_round: 10, benign_per_round: 5, use_llm: true })
-                });
-                if (!response.ok) throw new Error(`Co-evolution API failed (${response.status})`);
-                const result = await response.json();
-                console.log("Coevolution completed:", result);
-            } catch (error) {
-                console.error('Co-evolution campaign failed:', error);
-            } finally {
-                coevolutionBtn.disabled = false;
-                coevolutionBtn.textContent = '⚔️ Co-Evolution';
-            }
-        });
-    }
 }
 
-// Handle metrics update from server
 function updateMetricsFromServer(data) {
     if (!data) return;
     document.getElementById('val-total-events').textContent = data.event_count ?? stats.totalEvents;
     document.getElementById('val-precision').textContent = (data.precision || 0).toFixed(2);
     document.getElementById('val-recall').textContent = (data.recall || 0).toFixed(2);
     document.getElementById('val-ttd').textContent = Math.round(data.time_to_detect_ms || 0) + 'ms';
+    const ttrEl = document.getElementById('val-ttr');
+    if (ttrEl) {
+        ttrEl.textContent = Math.round(data.time_to_remediate_ms || 0) + 'ms';
+    }
     updateAgentHealth({ status: 'operational', event_count: data.event_count ?? stats.totalEvents });
 }
 
@@ -517,41 +525,4 @@ function updateCampaignStatus(data) {
     const el = document.getElementById('campaign-status');
     el.textContent = `${label}  ·  ${rounds}/${maxRounds} ROUNDS  ·  ${events}/${maxEvents} EVENTS  ·  ${mode}`;
     el.dataset.status = status;
-}
-
-function updateCoevolutionStatus(data) {
-    if (!data) return;
-    const status = data.status || 'idle';
-    const el = document.getElementById('campaign-status');
-    const progEl = document.getElementById('coevolution-progress');
-    
-    if (status === 'started') {
-        el.textContent = `CO-EVOLUTION RUNNING  ·  ${data.rounds} ROUNDS`;
-        el.dataset.status = 'started';
-        progEl.style.display = 'block';
-        document.getElementById('coevolution-fill').style.width = '0%';
-        document.getElementById('coevolution-label').textContent = `Round 0/${data.rounds}`;
-    } else if (status === 'completed') {
-        el.textContent = `CO-EVOLUTION COMPLETED`;
-        el.dataset.status = 'completed';
-        progEl.style.display = 'none';
-        // You could display the summary in the UI if desired
-        console.log("Co-evolution Summary:", data.summary);
-    } else if (status === 'failed') {
-        el.textContent = `CO-EVOLUTION FAILED`;
-        el.dataset.status = 'failed';
-        progEl.style.display = 'none';
-    }
-}
-
-function updateCoevolutionRound(data) {
-    if (!data) return;
-    const round = data.round;
-    // Assuming max rounds is known or we just show the current round
-    document.getElementById('coevolution-label').textContent = `Round ${round}`;
-    // We could calculate a percentage if we stored max_rounds, but let's just show activity
-    document.getElementById('coevolution-fill').style.width = '100%';
-    setTimeout(() => {
-        document.getElementById('coevolution-fill').style.width = '0%';
-    }, 500);
 }

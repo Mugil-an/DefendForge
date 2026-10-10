@@ -1,3 +1,12 @@
 {
-  "blocked_ips": []
+  "blocked_ips": [
+    {
+      "ip": "127.0.0.1",
+      "reason": "Severe SQL Injection detected."
+    },
+    {
+      "ip": "user",
+      "reason": "Severe  detected."
+    }
+  ]
 }

@@ -1,0 +1,9 @@
+unit: target-app-http
+commit: false
+candidate_splits:
+  - id: "target_app/app.py:46-78"
+    drivers: [concern_split]
+    rationale: "Readiness, page rendering, and todo CRUD are separate HTTP concerns with different response and persistence behavior."
+    source_slice:
+      file: target_app/app.py
+      lines: [46, 78]

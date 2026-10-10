@@ -1,0 +1,15 @@
+unit: target-app-http
+bindings:
+  - type: route-declaration
+    name: "Flask routes /, /health, /todos, /todos/<int:todo_id>"
+    source_loc: "target_app/app.py:46"
+    target: "Flask app"
+    must_appear_in_target: true
+    notes: "HTTP methods are part of the contract."
+runtime_config:
+  - key: DATABASE_PATH
+    source_loc: "target_app/app.py:10"
+    source: env
+    default_value: app.db
+    must_appear_in_target: true
+    notes: "SQLite database location."

@@ -1,0 +1,26 @@
+unit: target-app-http
+side_effects:
+  - source_loc: "target_app/app.py:65"
+    effect: "Inserts a todo row and commits SQLite transaction."
+    must_preserve: true
+  - source_loc: "target_app/app.py:77"
+    effect: "Deletes a todo row and commits SQLite transaction."
+    must_preserve: true
+branches:
+  - source_loc: "target_app/app.py:62"
+    condition: "request has no title"
+    behavior: "Return 400 JSON validation error."
+    must_preserve: true
+error_paths:
+  - source_loc: "target_app/app.py:62"
+    trigger: "Missing or empty title on POST /todos"
+    outcome: "JSON error response"
+    contract: "HTTP 400 {error: Title is required}"
+    must_preserve: true
+concurrency:
+  model: sync
+  tx_boundary:
+    source_loc: "target_app/app.py:65"
+    scope: "Each insert/delete and commit is synchronous per request."
+    isolation: "SQLite default"
+    must_preserve: true

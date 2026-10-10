@@ -1,0 +1,15 @@
+unit: red-live-campaign
+bindings:
+  - type: convention
+    name: "LiveCampaign target_url"
+    source_loc: "red_agent/live_campaign.py:28"
+    target: "HTTP client campaign runner"
+    must_appear_in_target: true
+    notes: "Only local allowlisted hosts are accepted."
+runtime_config:
+  - key: RED_TARGET_URL
+    source_loc: "red_agent/config.py:8"
+    source: env
+    default_value: http://target_app:5000
+    must_appear_in_target: true
+    notes: "Compose points this at the bundled target service."

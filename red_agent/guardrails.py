@@ -10,7 +10,12 @@ class SafetyViolation(ValueError):
 
 class TargetGuard:
     def __init__(self, allowed_targets: set[str] | None = None):
-        self.allowed_targets = frozenset(allowed_targets or {"target_app", "target-app", "localhost", "127.0.0.1"})
+        self.allowed_targets = frozenset(
+            allowed_targets or {
+                "target_app", "target-app", "target_gateway", "target-gateway",
+                "localhost", "127.0.0.1", "::1",
+            }
+        )
 
     def validate(self, target: str) -> str:
         parsed = urlparse(target if "://" in target else f"sim://{target}")
@@ -20,7 +25,8 @@ class TargetGuard:
         if parsed.scheme not in {"sim", "http", "https"}:
             raise SafetyViolation("unsupported target scheme")
         if parsed.scheme in {"http", "https"} and host not in {
-            "localhost", "127.0.0.1", "::1", "target_app", "target-app"
+            "localhost", "127.0.0.1", "::1", "target_app", "target-app",
+            "target_gateway", "target-gateway",
         }:
             raise SafetyViolation("network targets are restricted to loopback")
         return target

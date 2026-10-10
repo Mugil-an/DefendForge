@@ -1,0 +1,29 @@
+flows:
+  - name: configured-target-url
+    medium: framework-context
+    key: TARGET_APP_URL
+    writer:
+      unit: blue-agent-api
+      source_loc: "blue_agent/config.py:134"
+    reader:
+      unit: red-live-campaign
+      source_loc: "red_agent/live_campaign.py:28"
+    pairing: matched
+    must_preserve: true
+    must_confirm: null
+    verification_hint: "Run a local campaign and verify requests reach the configured host."
+    notes: "Compose overrides the value with http://target_app:5000."
+  - name: target-health-url
+    medium: framework-context
+    key: VALIDATION_HEALTH_URL
+    writer:
+      unit: blue-agent-api
+      source_loc: "blue_agent/config.py:146"
+    reader:
+      unit: blue-agent-api
+      source_loc: "blue_agent/monitoring/health.py:50"
+    pairing: matched
+    must_preserve: true
+    must_confirm: null
+    verification_hint: "Health API must report target reachability independently of Blue Agent health."
+    notes: "The implementation currently appends /health to TARGET_APP_URL rather than reading this key in check_target_app."

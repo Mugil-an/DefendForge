@@ -8,7 +8,7 @@ if not DATA_DIR.exists():
     DATA_DIR = BASE_DIR / "data" / "CICIDS2017"
 
 TRAIN_FILES = ("Monday", "Tuesday", "Wednesday")
-VALIDATION_FILES = ("Thursday",)
+VALIDATION_FILES = ("Wednesday",)
 TEST_FILES = ("Friday",)
 NON_FEATURE_COLUMNS = {"flow id", "source ip", "destination ip", "timestamp"}
 CHUNK_SIZE = 50_000

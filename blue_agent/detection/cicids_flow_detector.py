@@ -17,7 +17,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from blue_agent.config import PROJECT_ROOT
+from blue_agent.config import PROJECT_ROOT, settings
 from blue_agent.detection.anomaly_detector import AnomalyDetectorBase
 from blue_agent.logging_cfg import get_logger
 from blue_agent.schemas import AnomalyResult
@@ -25,7 +25,7 @@ from blue_agent.schemas import AnomalyResult
 log = get_logger("detection.cicids_flow")
 
 # Default path to the existing trained model
-_DEFAULT_MODEL_PATH = PROJECT_ROOT / "blue_agent" / "anomaly_detector" / "models" / "isolation_forest.joblib"
+_DEFAULT_MODEL_PATH = Path(settings.detection.model_path) if "random_forest" in settings.detection.model_path else PROJECT_ROOT / "blue_agent" / "anomaly_detector" / "models" / "cicids_random_forest.joblib"
 
 
 class CICIDSFlowDetector(AnomalyDetectorBase):
@@ -117,24 +117,46 @@ class CICIDSFlowDetector(AnomalyDetectorBase):
                 X = X.reindex(columns=self._feature_names)
             X = X.values
 
-        raw_scores = -self._pipeline.score_samples(X)  # higher = more anomalous
-        results: List[AnomalyResult] = []
+        # Check if model provides score_samples (like IsolationForest) or predict_proba (like RandomForest)
+        if hasattr(self._pipeline, "score_samples"):
+            raw_scores = -self._pipeline.score_samples(X)  # higher = more anomalous
+            
+            for score in raw_scores:
+                is_anomaly = score >= self._threshold
+                # Normalise to [0, 1]: score / (2 * threshold) gives 0.5 at boundary
+                norm_score = min(1.0, float(score) / (2.0 * self._threshold))
+                # Confidence from distance to threshold
+                if is_anomaly:
+                    confidence = min(1.0, 0.5 + (score - self._threshold) / (self._threshold + 1e-8) * 0.5)
+                else:
+                    confidence = min(1.0, 0.5 + (self._threshold - score) / (self._threshold + 1e-8) * 0.5)
 
-        for score in raw_scores:
-            is_anomaly = score >= self._threshold
-            # Normalise to [0, 1]: score / (2 * threshold) gives 0.5 at boundary
-            norm_score = min(1.0, float(score) / (2.0 * self._threshold))
-            # Confidence from distance to threshold
-            if is_anomaly:
-                confidence = min(1.0, 0.5 + (score - self._threshold) / (self._threshold + 1e-8) * 0.5)
+                results.append(AnomalyResult(
+                    is_anomaly=is_anomaly,
+                    anomaly_score=round(norm_score, 4),
+                    confidence=round(float(confidence), 4),
+                ))
+        elif hasattr(self._pipeline, "predict_proba"):
+            probs = self._pipeline.predict_proba(X)
+            # Assuming index 1 is the anomaly/attack class
+            if probs.shape[1] > 1:
+                attack_probs = probs[:, 1]
             else:
-                confidence = min(1.0, 0.5 + (self._threshold - score) / (self._threshold + 1e-8) * 0.5)
-
-            results.append(AnomalyResult(
-                is_anomaly=is_anomaly,
-                anomaly_score=round(norm_score, 4),
-                confidence=round(float(confidence), 4),
-            ))
+                attack_probs = probs[:, 0]
+                
+            for prob in attack_probs:
+                is_anomaly = prob >= self._threshold
+                # Probability is already 0 to 1
+                norm_score = float(prob)
+                confidence = float(abs(prob - 0.5) * 2) # 0.5 prob is 0 conf, 1.0 prob is 1.0 conf
+                
+                results.append(AnomalyResult(
+                    is_anomaly=is_anomaly,
+                    anomaly_score=round(norm_score, 4),
+                    confidence=round(confidence, 4),
+                ))
+        else:
+            raise NotImplementedError("Model in artifact must implement score_samples or predict_proba")
         return results
 
     def save(self, path: str) -> None:

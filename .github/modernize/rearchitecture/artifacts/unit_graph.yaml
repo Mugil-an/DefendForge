@@ -1,0 +1,87 @@
+units:
+  - name: target-app-http
+    trigger: api
+    trigger_detail: "Flask HTTP routes /, /health, /todos, /todos/<int:todo_id>"
+    source_anchors:
+      - path: target_app/app.py
+        line: 46
+    exported_signature:
+      - method: "GET /health -> JSON {status}"
+        source_loc: "target_app/app.py:50"
+        stability: frozen
+      - method: "GET|POST /todos and DELETE /todos/<int:todo_id>"
+        source_loc: "target_app/app.py:54"
+        stability: frozen
+    dynamic_entrypoints: []
+    depends_on: []
+    shared_refs: []
+  - name: blue-agent-api
+    trigger: api
+    trigger_detail: "FastAPI REST and WebSocket dashboard endpoints"
+    source_anchors:
+      - path: blue_agent/api/routes.py
+        line: 37
+    exported_signature:
+      - method: "POST /api/traffic -> MetricsSnapshot"
+        source_loc: "blue_agent/api/routes.py:403"
+        stability: frozen
+      - method: "POST /api/red/campaign/start -> campaign result"
+        source_loc: "blue_agent/api/routes.py:430"
+        stability: frozen
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: red-live-campaign
+        via: "run_autonomous_attack"
+      - unit: flow-sniffer
+        via: "POST /api/netflow"
+    shared_refs:
+      - module: target-configuration
+        used_fields: [target_app_url, target_app_path, health_check_url]
+  - name: red-live-campaign
+    trigger: handler
+    trigger_detail: "Bounded Red Agent live HTTP campaign"
+    source_anchors:
+      - path: red_agent/live_campaign.py
+        line: 23
+    exported_signature:
+      - method: "LiveCampaign.run() -> (traffic, truth)"
+        source_loc: "red_agent/live_campaign.py:68"
+        stability: must_preserve
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: target-app-http
+        via: "HTTP GET/POST attack requests"
+      - unit: blue-agent-api
+        via: "traffic processing"
+    shared_refs:
+      - module: target-configuration
+        used_fields: [target_app_url]
+  - name: green-live-traffic
+    trigger: handler
+    trigger_detail: "Green Agent generated/live benign traffic"
+    source_anchors:
+      - path: green_agent/__init__.py
+        line: 79
+    exported_signature: []
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: target-app-http
+        via: "HTTP GET requests"
+    shared_refs:
+      - module: target-configuration
+        used_fields: [target_app_url]
+  - name: flow-sniffer
+    trigger: handler
+    trigger_detail: "CICFlowMeter flow CSV tailer"
+    source_anchors:
+      - path: flow_sniffer/sniffer.py
+        line: 10
+    exported_signature:
+      - method: "POST netflow event to BLUE_AGENT_URL"
+        source_loc: "flow_sniffer/sniffer.py:28"
+        stability: must_preserve
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: blue-agent-api
+        via: "POST /api/netflow"
+    shared_refs: []

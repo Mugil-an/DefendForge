@@ -71,10 +71,11 @@ class MetricsTracker:
     def record_remediation(self, success: bool, time_ms: float = 0.0) -> None:
         if success:
             self._successful_patches += 1
-            if time_ms > 0:
-                self._remediation_times.append(time_ms)
         else:
             self._rolled_back_patches += 1
+            
+        if time_ms > 0:
+            self._remediation_times.append(time_ms)
 
     def get_snapshot(self) -> MetricsSnapshot:
         """Compute the current metrics snapshot."""

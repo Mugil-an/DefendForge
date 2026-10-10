@@ -88,7 +88,7 @@ class LLMSettings:
         if self.provider == "deepseek":
             return "https://api.deepseek.com/v1"
         if self.provider == "ollama":
-            return "http://localhost:11434/v1"
+            return "http://host.docker.internal:11434/v1"
         return "https://api.openai.com/v1"
 
 

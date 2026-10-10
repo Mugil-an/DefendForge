@@ -1,0 +1,9 @@
+unit: red-live-campaign
+commit: false
+candidate_splits:
+  - id: "red_agent/live_campaign.py:68-105"
+    drivers: [protocol_split, concern_split]
+    rationale: "Target validation, payload execution, response recording, and campaign state adaptation can evolve independently."
+    source_slice:
+      file: red_agent/live_campaign.py
+      lines: [68, 105]

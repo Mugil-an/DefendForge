@@ -9,10 +9,11 @@ from typing import List, Optional
 
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from blue_agent.config import settings
 from blue_agent.logging_cfg import get_logger
-from blue_agent.schemas import BlueMemoryRecord, DecisionPath, ValidationDecision
+from blue_agent.schemas import BlueMemoryRecord, DecisionPath, SecurityEventRecord, ValidationDecision
 
 log = get_logger("memory.repository")
 
@@ -42,6 +43,34 @@ class BlueMemoryModel(Base):
     extra = Column(Text)  # JSON dict
 
 
+class SecurityEventModel(Base):
+    """Normalized gateway event, retained independently from Blue predictions."""
+
+    __tablename__ = "security_events"
+
+    event_id = Column(String, primary_key=True)
+    occurred_at = Column(DateTime, nullable=False)
+    target_id = Column(String, index=True)
+    method = Column(String, nullable=False)
+    path = Column(String, nullable=False)
+    query = Column(Text)
+    status_code = Column(Integer)
+    duration_ms = Column(Float)
+    request_size = Column(Integer)
+    response_size = Column(Integer)
+    source_kind = Column(String, nullable=False, index=True)
+    source_provenance = Column(Text, nullable=False)
+    campaign_id = Column(String, index=True)
+    request_id = Column(String, index=True)
+    finding_id = Column(String, index=True)
+    patch_id = Column(String, index=True)
+    validation_id = Column(String, index=True)
+    prediction_is_attack = Column(Boolean)
+    prediction_attack_type = Column(String)
+    prediction_confidence = Column(Float)
+    raw_event = Column(Text, nullable=False)
+
+
 class MemoryRepository:
     """
     Handles storing and retrieving the agent's experiences.
@@ -50,7 +79,13 @@ class MemoryRepository:
 
     def __init__(self, db_url: Optional[str] = None):
         self._db_url = db_url or settings.db.sync_url
-        self._engine = create_engine(self._db_url, echo=False)
+        engine_options = {}
+        if self._db_url == "sqlite:///:memory:":
+            engine_options = {
+                "connect_args": {"check_same_thread": False},
+                "poolclass": StaticPool,
+            }
+        self._engine = create_engine(self._db_url, echo=False, **engine_options)
         self._SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self._engine)
         
         # Initialize schema
@@ -116,3 +151,87 @@ class MemoryRepository:
                     extra=json.loads(m.extra),
                 ))
             return records
+
+    def store_event(self, event: SecurityEventRecord) -> None:
+        """Persist one normalized observation; duplicate event IDs are rejected."""
+        model = SecurityEventModel(
+            event_id=event.event_id,
+            occurred_at=event.occurred_at,
+            target_id=event.target_id,
+            method=event.method,
+            path=event.path,
+            query=event.query,
+            status_code=event.status_code,
+            duration_ms=event.duration_ms,
+            request_size=event.request_size,
+            response_size=event.response_size,
+            source_kind=event.source_kind,
+            source_provenance=json.dumps(event.source_provenance),
+            campaign_id=event.campaign_id,
+            request_id=event.request_id,
+            finding_id=event.finding_id,
+            patch_id=event.patch_id,
+            validation_id=event.validation_id,
+            prediction_is_attack=event.prediction_is_attack,
+            prediction_attack_type=event.prediction_attack_type,
+            prediction_confidence=event.prediction_confidence,
+            raw_event=json.dumps(event.raw_event),
+        )
+        with self._SessionLocal() as session:
+            try:
+                session.add(model)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    def update_event(self, event: SecurityEventRecord) -> None:
+        """Update Blue's prediction/correlation fields without replacing provenance."""
+        with self._SessionLocal() as session:
+            model = session.get(SecurityEventModel, event.event_id)
+            if model is None:
+                self.store_event(event)
+                return
+            model.finding_id = event.finding_id
+            model.patch_id = event.patch_id
+            model.validation_id = event.validation_id
+            model.prediction_is_attack = event.prediction_is_attack
+            model.prediction_attack_type = event.prediction_attack_type
+            model.prediction_confidence = event.prediction_confidence
+            session.commit()
+
+    def get_events(self, limit: int = 100) -> List[SecurityEventRecord]:
+        """Return durable events newest first."""
+        with self._SessionLocal() as session:
+            models = (
+                session.query(SecurityEventModel)
+                .order_by(SecurityEventModel.occurred_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                SecurityEventRecord(
+                    event_id=m.event_id,
+                    occurred_at=m.occurred_at,
+                    target_id=m.target_id or "",
+                    method=m.method,
+                    path=m.path,
+                    query=m.query or "",
+                    status_code=m.status_code,
+                    duration_ms=m.duration_ms,
+                    request_size=m.request_size,
+                    response_size=m.response_size,
+                    source_kind=m.source_kind,
+                    source_provenance=json.loads(m.source_provenance),
+                    campaign_id=m.campaign_id,
+                    request_id=m.request_id,
+                    finding_id=m.finding_id,
+                    patch_id=m.patch_id,
+                    validation_id=m.validation_id,
+                    prediction_is_attack=m.prediction_is_attack,
+                    prediction_attack_type=m.prediction_attack_type,
+                    prediction_confidence=m.prediction_confidence,
+                    raw_event=json.loads(m.raw_event),
+                )
+                for m in models
+            ]

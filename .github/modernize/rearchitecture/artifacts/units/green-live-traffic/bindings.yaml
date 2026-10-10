@@ -1,0 +1,9 @@
+unit: green-live-traffic
+bindings:
+  - type: convention
+    name: "GreenTrafficConfig target_url"
+    source_loc: "green_agent/__init__.py:29"
+    target: "HTTPX live traffic client"
+    must_appear_in_target: true
+    notes: "The traffic behavior assumes conventional web routes."
+runtime_config: []

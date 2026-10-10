@@ -8,6 +8,9 @@ from red_agent.knowledge import AttackKnowledge
 from red_agent.models import AttackPlan, CampaignState
 from red_agent.traffic_generator import TrafficGenerator
 from red_agent.campaign import SimulatedCampaign
+from red_agent.planner import TargetAwarePlanner
+from red_agent.provenance import signed_provenance_headers, verify_provenance
+from target_platform.registry import Endpoint, RegisteredTarget
 
 
 def test_attack_plan_validation():
@@ -54,3 +57,26 @@ def test_knowledge_retrieval_from_local_json(tmp_path):
     assert knowledge.get("xss").technique == "T1189"
     assert knowledge.retrieve("encoding")[0].attack_type == "xss"
 
+
+def test_target_aware_planner_uses_discovery_and_audit_with_bound():
+    target = RegisteredTarget(
+        "payments",
+        "http://127.0.0.1:8000",
+        endpoints=(Endpoint("GET", "/lookup", ("q",)),),
+    )
+    plans = TargetAwarePlanner(target, max_events=1).plan(
+        target.endpoints, {"semgrep": {"result": [{"check_id": "CWE-89"}]}}
+    )
+    assert len(plans) == 1
+    assert plans[0]["type"] == "sql_injection"
+    assert plans[0]["endpoint"] == "/lookup"
+
+
+def test_red_provenance_is_signed_and_tamper_evident():
+    headers = signed_provenance_headers("campaign-1", "request-1", secret="test")
+    assert verify_provenance(
+        "campaign-1", "request-1", headers["X-DefendForge-Signature"], secret="test"
+    )
+    assert not verify_provenance(
+        "campaign-1", "request-2", headers["X-DefendForge-Signature"], secret="test"
+    )

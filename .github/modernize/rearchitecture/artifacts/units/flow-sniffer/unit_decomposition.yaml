@@ -1,0 +1,9 @@
+unit: flow-sniffer
+commit: false
+candidate_splits:
+  - id: "flow_sniffer/sniffer.py:10-34"
+    drivers: [execution_model_split, protocol_split]
+    rationale: "CICFlowMeter process management, CSV parsing, and HTTP forwarding are separate runtime concerns."
+    source_slice:
+      file: flow_sniffer/sniffer.py
+      lines: [10, 34]

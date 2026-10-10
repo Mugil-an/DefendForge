@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import httpx
 from typing import Dict, Any, List
@@ -16,9 +17,9 @@ class AutonomousAttackPlanner:
     reconnaissance data and MITRE ATT&CK context.
     """
     
-    def __init__(self, model_name: str = "llama3", api_url: str = "http://localhost:11434"):
+    def __init__(self, model_name: str = "llama3", api_url: str = None):
         self.model_name = red_settings.llm_model if hasattr(red_settings, 'llm_model') else model_name
-        self.api_url = api_url
+        self.api_url = api_url or os.getenv("LLM_BASE_URL", "http://host.docker.internal:11434")
         self.client = httpx.Client(timeout=30.0)
         self.conversation_history: List[Dict[str, str]] = []
 

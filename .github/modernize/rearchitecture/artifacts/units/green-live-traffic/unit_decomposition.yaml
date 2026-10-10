@@ -1,0 +1,9 @@
+unit: green-live-traffic
+commit: false
+candidate_splits:
+  - id: "green_agent/__init__.py:112-188"
+    drivers: [concern_split, reuse_split]
+    rationale: "Synthetic event generation and real HTTP traffic execution use different outputs and target assumptions."
+    source_slice:
+      file: green_agent/__init__.py
+      lines: [112, 188]

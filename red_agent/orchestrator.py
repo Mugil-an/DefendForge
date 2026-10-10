@@ -8,7 +8,9 @@ from red_agent.campaign import SimulatedCampaign
 from red_agent.live_campaign import LiveCampaign
 from red_agent.autonomous_campaign import AutonomousCampaign, AutonomousCampaignResult
 from red_agent.memory import RedMemory
+from red_agent.audit_runner import run_audits
 from red_agent.config import red_settings
+from target_platform.registry import TargetRegistry
 from blue_agent.logging_cfg import get_logger
 
 log = get_logger("red.orchestrator")
@@ -22,6 +24,8 @@ class RedAgent:
         self._campaign = None
         self._autonomous_campaign: AutonomousCampaign | None = None
         self._autonomous_result: AutonomousCampaignResult | None = None
+        self._autonomous_in_progress = False
+        self._autonomous_progress: Dict = {}
         self._memory = RedMemory()
     
     @property
@@ -34,6 +38,11 @@ class RedAgent:
         result = scenario.generate()
         self._attack_log.extend(result.ground_truth)
         return result
+
+    def run_target_audit(self, target_name: str = "default") -> Dict:
+        """Run the registered target's allowlisted read-only audits."""
+        target = TargetRegistry().load(target_name)
+        return run_audits(target.audit.source_path, target.audit)
     
     def run_continuous(self, total_events: int, benign_ratio: float = 0.3) -> ScenarioResult:
         """Generate continuous mixed traffic."""
@@ -104,6 +113,7 @@ class RedAgent:
         rounds: int = 5,
         max_events_per_round: int = 10,
         use_llm: bool = True,
+        round_callback=None,
     ) -> AutonomousCampaignResult:
         """
         Run the full autonomous multi-round campaign with:
@@ -117,6 +127,25 @@ class RedAgent:
                  events_per_round=max_events_per_round,
                  use_llm=use_llm)
 
+        self._autonomous_in_progress = True
+        self._autonomous_progress = {
+            "status": "running",
+            "mode": "full_autonomous",
+            "rounds": 0,
+            "events": 0,
+            "max_rounds": rounds,
+            "max_events": rounds * max_events_per_round,
+            "execution_mode": "full_autonomous",
+        }
+
+        def on_round(traffic, ground_truth, summary):
+            self._autonomous_progress.update({
+                "rounds": summary.get("round", 0),
+                "events": self._autonomous_progress["events"] + len(traffic),
+            })
+            if round_callback:
+                round_callback(traffic, ground_truth, summary)
+
         self._autonomous_campaign = AutonomousCampaign(
             red_settings.target_url,
             max_rounds=rounds,
@@ -124,9 +153,13 @@ class RedAgent:
             timeout=red_settings.request_timeout,
             use_llm=use_llm,
             memory=self._memory,
+            round_callback=on_round,
         )
 
-        self._autonomous_result = self._autonomous_campaign.run()
+        try:
+            self._autonomous_result = self._autonomous_campaign.run()
+        finally:
+            self._autonomous_in_progress = False
 
         # Also extend the attack log for backward compatibility
         self._attack_log.extend(self._autonomous_result.ground_truth)
@@ -135,6 +168,8 @@ class RedAgent:
 
     def get_campaign_status(self) -> Dict:
         """Return a serializable snapshot of the latest autonomous campaign."""
+        if self._autonomous_in_progress:
+            return dict(self._autonomous_progress)
         # Check autonomous campaign first
         if self._autonomous_result:
             return {

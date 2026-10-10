@@ -1,0 +1,21 @@
+unit: blue-agent-api
+bindings:
+  - type: route-declaration
+    name: "FastAPI REST endpoints and WebSocket /ws"
+    source_loc: "blue_agent/api/routes.py:37"
+    target: "FastAPI app"
+    must_appear_in_target: true
+    notes: "Dashboard is served from /static and root redirects to it."
+runtime_config:
+  - key: TARGET_APP_URL
+    source_loc: "blue_agent/config.py:134"
+    source: env
+    default_value: http://target_app:5000
+    must_appear_in_target: true
+    notes: "Target health and integration location."
+  - key: TARGET_APP_PATH
+    source_loc: "blue_agent/config.py:133"
+    source: env
+    default_value: PROJECT_ROOT/target_app
+    must_appear_in_target: true
+    notes: "Audit and patch target source path."

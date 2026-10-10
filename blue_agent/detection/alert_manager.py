@@ -131,13 +131,14 @@ class AlertManager:
         severity = _estimate_severity(result.anomaly_score, features_dict)
 
         event = AttackEvent(
+            event_id=raw_event.get("event_id") or str(uuid.uuid4()),
             source=source,
             destination=raw_event.get("destination", ""),
             endpoint=raw_event.get("endpoint", ""),
             attack_type=classification["attack_type"],
             cwe=classification["cwe"],
             mitre_technique=classification["mitre_technique"],
-            features=features_dict,
+            features={**features_dict, "finding_id": raw_event.get("finding_id")},
             anomaly_score=result.anomaly_score,
             detection_confidence=result.confidence,
             evidence=[

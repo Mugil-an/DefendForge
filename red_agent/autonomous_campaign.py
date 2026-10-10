@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin
 
 import httpx
@@ -26,6 +26,9 @@ from red_agent.knowledge import AttackKnowledge
 from red_agent.memory import AttackRecord, RedMemory, RoundSummary
 from red_agent.models import CampaignState
 from red_agent.payloads import get_payloads, get_all_categories
+from red_agent.planner import TargetAwarePlanner
+from red_agent.provenance import signed_provenance_headers
+from target_platform.registry import Endpoint, RegisteredTarget, TargetRegistry
 from red_agent.recon.scanner import LiveScanner, ReconReport
 
 log = get_logger("red.autonomous")
@@ -63,6 +66,10 @@ class AutonomousCampaign:
         use_llm: bool = True,
         knowledge: AttackKnowledge | None = None,
         memory: RedMemory | None = None,
+        target: RegisteredTarget | None = None,
+        audit_findings: dict[str, Any] | None = None,
+        campaign_id: str | None = None,
+        round_callback: Callable[[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]], None] | None = None,
     ):
         self.guard = TargetGuard()
         self.guard.validate(target_url)
@@ -73,12 +80,17 @@ class AutonomousCampaign:
         self.use_llm = use_llm
         self.knowledge = knowledge or AttackKnowledge()
         self.memory = memory or RedMemory()
+        self.target = target or RegisteredTarget("runtime", self.target_url)
+        self.audit_findings = audit_findings or {}
+        self.campaign_id = campaign_id or f"campaign-{int(time.time() * 1000)}"
+        self.round_callback = round_callback
         self.state = CampaignState(
             max_rounds=self.max_rounds,
             max_events=self.max_rounds * self.max_events_per_round,
         )
         self._recon_report: ReconReport | None = None
         self._llm_available = False
+        self._discovered_endpoints: tuple[Endpoint, ...] = ()
 
     def run(self) -> AutonomousCampaignResult:
         """Execute the full autonomous campaign."""
@@ -91,6 +103,12 @@ class AutonomousCampaign:
         # Phase 1: Reconnaissance
         log.info("autonomous_campaign_phase_1_recon")
         self._recon_report = self._perform_recon()
+        try:
+            self._discovered_endpoints = (
+                TargetRegistry().discover(self.target, self.timeout) or self.target.endpoints
+            )
+        except (OSError, ValueError, httpx.HTTPError):
+            self._discovered_endpoints = ()
         result.recon_report = self._recon_report.to_dict()
 
         # Check LLM availability
@@ -143,6 +161,12 @@ class AutonomousCampaign:
                     "types": summary.attack_types_used,
                     "duration_ms": round(summary.duration_ms, 1),
                 })
+                if self.round_callback:
+                    self.round_callback(
+                        round_traffic,
+                        round_truth,
+                        result.round_summaries[-1],
+                    )
 
                 result.rounds_completed = round_num
                 self.state.rounds = round_num
@@ -223,6 +247,7 @@ class AutonomousCampaign:
                      action=action,
                      reasoning=reasoning[:200])
 
+            plan = []
             # Map LLM decision to attack plan
             if action in get_all_categories():
                 # Find the best endpoints for this attack type
@@ -246,6 +271,15 @@ class AutonomousCampaign:
     def _plan_heuristic(self, round_num: int) -> list[dict[str, Any]]:
         """Heuristic attack planning without LLM."""
         plan = []
+
+        # Prefer target registry discovery and audit evidence over the legacy
+        # bundled-route catalogue. The hard cap is enforced by the planner.
+        if self._discovered_endpoints:
+            target_plan = TargetAwarePlanner(
+                self.target, max_events=self.max_events_per_round
+            ).plan(self._discovered_endpoints, self.audit_findings)
+            if target_plan:
+                return target_plan
 
         # Use memory to pick best attack types
         best_types = self.memory.get_best_attack_types(3)
@@ -277,6 +311,16 @@ class AutonomousCampaign:
 
     def _get_endpoints_for_attack(self, attack_type: str) -> list[dict[str, str]]:
         """Map attack type to target endpoints using recon data."""
+        if self._discovered_endpoints:
+            discovered = []
+            for endpoint in self._discovered_endpoints:
+                candidate = TargetAwarePlanner(self.target, max_events=50).plan(
+                    (endpoint,), self.audit_findings
+                )
+                if any(item["type"] == attack_type for item in candidate):
+                    discovered.append({"endpoint": endpoint.path, "method": endpoint.method})
+            if discovered:
+                return discovered
         # Map attack types to known vulnerable endpoints
         attack_endpoint_map = {
             "sql_injection": [
@@ -346,12 +390,14 @@ class AutonomousCampaign:
 
             # Build and send the request
             params = {payload.param_name: payload.payload} if payload.param_name else {}
+            request_id = f"{self.campaign_id}-{round_num}-{len(traffic)}"
+            provenance = signed_provenance_headers(self.campaign_id, request_id)
 
             try:
                 if method.upper() == "POST":
-                    response = client.post(endpoint, data=params)
+                    response = client.post(endpoint, data=params, headers=provenance)
                 else:
-                    response = client.get(endpoint, params=params)
+                    response = client.get(endpoint, params=params, headers=provenance)
 
                 response_code = response.status_code
                 response_size = len(response.content)
@@ -377,6 +423,9 @@ class AutonomousCampaign:
                 "body_size": response_size,
                 "user_agent": "DefendForge-RedAgent/2.0-Autonomous",
                 "destination": "target_app",
+                "request_id": request_id,
+                "campaign_id": self.campaign_id,
+                "source_kind": "red",
             }
 
             truth_item = {

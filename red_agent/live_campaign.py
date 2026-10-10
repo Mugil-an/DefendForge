@@ -6,12 +6,14 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
+import uuid
 
 from red_agent.campaign import AdaptiveEvaluator
 from red_agent.guardrails import TargetGuard
 from red_agent.knowledge import AttackKnowledge
 from red_agent.models import AttackPlan, CampaignState
 from red_agent.payloads import get_payloads
+from red_agent.provenance import signed_provenance_headers
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class LiveCampaign:
         max_events: int = 25,
         timeout: float = 5.0,
         evaluator: AdaptiveEvaluator | None = None,
+        campaign_id: str | None = None,
     ) -> None:
         parsed = urlparse(target_url)
         if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
@@ -52,6 +55,10 @@ class LiveCampaign:
         )
         self.timeout = timeout
         self.evaluator = evaluator or AdaptiveEvaluator()
+        self.campaign_id = campaign_id or str(uuid.uuid4())
+
+    def _headers(self, request_id: str) -> dict[str, str]:
+        return signed_provenance_headers(self.campaign_id, request_id)
 
     def _request(self, plan: AttackPlan, payload: str, param_name: str) -> httpx.Response:
         url = urljoin(self.target_url, plan.endpoint.lstrip("/"))
@@ -72,10 +79,12 @@ class LiveCampaign:
                 payload = payloads[self.state.events % len(payloads)]
                 params = {payload.param_name: payload.payload} if payload.param_name else {}
                 try:
+                    request_id = str(uuid.uuid4())
+                    headers = self._headers(request_id)
                     if plan.method.upper() == "POST":
-                        response = client.post(plan.endpoint, data=params)
+                        response = client.post(plan.endpoint, data=params, headers=headers)
                     else:
-                        response = client.get(plan.endpoint, params=params)
+                        response = client.get(plan.endpoint, params=params, headers=headers)
                     response_code = response.status_code
                     response_size = len(response.content)
                 except httpx.HTTPError as exc:
@@ -95,6 +104,9 @@ class LiveCampaign:
                     "body_size": response_size,
                     "user_agent": "DefendForge-RedAgent/1.0",
                     "destination": urlparse(self.target_url).hostname,
+                    "request_id": request_id,
+                    "source_kind": "red",
+                    "campaign_id": self.campaign_id,
                 }
                 if error:
                     event["error"] = error

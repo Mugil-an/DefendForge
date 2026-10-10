@@ -102,6 +102,35 @@ class AttackEvent(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Durable gateway event
+# ---------------------------------------------------------------------------
+class SecurityEventRecord(BaseModel):
+    """A gateway observation with provenance and Blue's prediction separated."""
+
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    target_id: str = ""
+    method: str = "GET"
+    path: str = "/"
+    query: str = ""
+    status_code: Optional[int] = None
+    duration_ms: Optional[float] = None
+    request_size: Optional[int] = None
+    response_size: Optional[int] = None
+    source_kind: str = "unknown"
+    source_provenance: Dict[str, Any] = Field(default_factory=dict)
+    campaign_id: Optional[str] = None
+    request_id: Optional[str] = None
+    finding_id: Optional[str] = None
+    patch_id: Optional[str] = None
+    validation_id: Optional[str] = None
+    prediction_is_attack: Optional[bool] = None
+    prediction_attack_type: Optional[str] = None
+    prediction_confidence: Optional[float] = None
+    raw_event: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # PPO action output
 # ---------------------------------------------------------------------------
 class PPODecision(BaseModel):
@@ -144,6 +173,7 @@ class Patch(BaseModel):
 # Validation result
 # ---------------------------------------------------------------------------
 class ValidationResult(BaseModel):
+    validation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     patch_id: str
     tests_passed: bool = False
     security_checks_passed: bool = False
