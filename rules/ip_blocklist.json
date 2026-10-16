@@ -7,6 +7,82 @@
     {
       "ip": "user",
       "reason": "Severe  detected."
+    },
+    {
+      "ip": "10.0.0.66",
+      "reason": "Severe SQL Injection detected."
+    },
+    {
+      "ip": "192.168.1.213",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.46",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.182",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.237",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.21",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.231",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.28",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.4",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.77",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.120",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.162",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.179",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.92",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.119",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.48",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.233",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.148",
+      "reason": "Severe  detected."
+    },
+    {
+      "ip": "192.168.1.118",
+      "reason": "Severe  detected."
     }
   ]
 }

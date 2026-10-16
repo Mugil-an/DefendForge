@@ -155,3 +155,70 @@ class TestReasoningEngine:
         
         # Fallback to no_action
         assert analysis.recommended_action == "no_action"
+
+    def test_reasoning_engine_heuristic_fallback_on_gemini_failure(self):
+        from blue_agent.llm.reasoning_engine import ReasoningEngine
+
+        mock_llm = MagicMock()
+        mock_llm.generate_structured.side_effect = RuntimeError("Gemini API quota exhausted: 429")
+
+        mock_retriever = MagicMock()
+        mock_retriever.get_context_string.return_value = ""
+
+        mock_action_space = MagicMock()
+        mock_action_space.get_by_name.side_effect = lambda act: act
+
+        engine = ReasoningEngine(llm_client=mock_llm, retriever=mock_retriever, action_space=mock_action_space)
+        event = AttackEvent(
+            attack_type="sql_injection",
+            severity=Severity.HIGH,
+            endpoint="/login",
+            anomaly_score=0.95,
+        )
+
+        analysis = engine.analyze_event(event)
+
+        assert isinstance(analysis, LLMAnalysis)
+        assert analysis.patch_required is True
+        assert "SQL" in analysis.attack_classification
+        assert analysis.confidence >= 0.8
+
+
+# =========================================================================
+# GeminiClient & Circuit Breaker
+# =========================================================================
+class TestGeminiClient:
+    def test_quota_circuit_breaker(self):
+        from blue_agent.llm.gemini_client import GeminiClient
+
+        client = GeminiClient(api_key="test-key", model="gemini-3.8-flash")
+        # Simulate initialized model
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = Exception(
+            "429 You exceeded your current quota, please retry in 8 hours"
+        )
+        client._model = mock_model
+        client._available = True
+
+        assert client.available is True
+
+        # First call triggers 429 and trips the circuit breaker
+        with pytest.raises(RuntimeError, match="quota exhausted"):
+            client.generate_structured(
+                system_prompt="sys",
+                user_prompt="user",
+                response_model=DummyResponseModel,
+            )
+
+        # Circuit breaker is now open
+        assert client.available is False
+
+        # Subsequent call immediately raises without touching the model
+        mock_model.generate_content.reset_mock()
+        with pytest.raises(RuntimeError, match="Gemini client not available"):
+            client.generate_structured(
+                system_prompt="sys",
+                user_prompt="user",
+                response_model=DummyResponseModel,
+            )
+        mock_model.generate_content.assert_not_called()

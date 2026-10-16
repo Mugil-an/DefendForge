@@ -41,10 +41,11 @@ def _env_list(key: str, default: str = "") -> List[str]:
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BLUE_AGENT_ROOT = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_ROOT / "data"
-MODELS_DIR = PROJECT_ROOT / "models"
-PATCHES_DIR = PROJECT_ROOT / "patches"
-LOGS_DIR = PROJECT_ROOT / "logs"
+DATA_DIR = Path(_env("DATA_DIR", str(PROJECT_ROOT / "data")))
+RULES_DIR = Path(_env("RULES_DIR", str(PROJECT_ROOT / "rules")))
+MODELS_DIR = Path(_env("MODELS_DIR", str(PROJECT_ROOT / "models")))
+PATCHES_DIR = Path(_env("PATCHES_DIR", str(PROJECT_ROOT / "patches")))
+LOGS_DIR = Path(_env("LOGS_DIR", str(PROJECT_ROOT / "logs")))
 
 
 @dataclass
@@ -72,14 +73,14 @@ class DatabaseSettings:
 
 @dataclass
 class LLMSettings:
-    """Configurable LLM provider (openai / deepseek / ollama)."""
-    provider: str = _env("LLM_PROVIDER", "openai")          # openai | deepseek | ollama
+    """Configurable LLM provider (openai / deepseek / ollama / gemini)."""
+    provider: str = _env("LLM_PROVIDER", "ollama")          # openai | deepseek | ollama | gemini
     api_key: str = _env("LLM_API_KEY", "")
     base_url: str = _env("LLM_BASE_URL", "")                # override for deepseek / ollama
-    model: str = _env("LLM_MODEL", "gpt-4o")
-    temperature: float = _env_float("LLM_TEMPERATURE", 0.2)
+    model: str = _env("LLM_MODEL", "gemini-3.8-flash")
+    temperature: float = _env_float("LLM_TEMPERATURE", 0.15)
     max_tokens: int = _env_int("LLM_MAX_TOKENS", 4096)
-    timeout: int = _env_int("LLM_TIMEOUT", 60)
+    timeout: int = _env_int("LLM_TIMEOUT", 90)
 
     @property
     def effective_base_url(self) -> str:
@@ -90,6 +91,20 @@ class LLMSettings:
         if self.provider == "ollama":
             return "http://host.docker.internal:11434/v1"
         return "https://api.openai.com/v1"
+
+
+@dataclass
+class GeminiSettings:
+    """Google Gemini configuration."""
+    api_key: str = _env("GEMINI_API_KEY", "")
+    model: str = _env("GEMINI_MODEL", "gemini-3.8-flash")
+    temperature: float = _env_float("GEMINI_TEMPERATURE", 0.15)
+    max_output_tokens: int = _env_int("GEMINI_MAX_TOKENS", 4096)
+
+    @property
+    def enabled(self) -> bool:
+        """True if a valid API key is configured."""
+        return bool(self.api_key and (self.api_key.startswith("AIza") or self.api_key.startswith("AQ") or len(self.api_key) > 10))
 
 
 @dataclass
@@ -106,14 +121,14 @@ class RAGSettings:
 
 @dataclass
 class DetectionSettings:
-    backend: str = _env("DETECTION_BACKEND", "isolation_forest")  # isolation_forest | autoencoder
+    backend: str = _env("DETECTION_BACKEND", "random_forest")  # random_forest | isolation_forest | autoencoder
     model_path: str = _env(
         "DETECTION_MODEL_PATH",
-        str(MODELS_DIR / "isolation_forest.joblib"),
+        str(MODELS_DIR / "random_forest_24.joblib"),
     )
     anomaly_threshold: float = _env_float("DETECTION_ANOMALY_THRESHOLD", 0.5)
     sliding_window_seconds: int = _env_int("DETECTION_WINDOW_SECONDS", 60)
-    min_events_for_alert: int = _env_int("DETECTION_MIN_EVENTS", 3)
+    min_events_for_alert: int = _env_int("DETECTION_MIN_EVENTS", 1)
 
 
 @dataclass
@@ -198,6 +213,7 @@ class Settings:
     """Aggregate of every sub-configuration."""
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
     llm: LLMSettings = field(default_factory=LLMSettings)
+    gemini: GeminiSettings = field(default_factory=GeminiSettings)
     rag: RAGSettings = field(default_factory=RAGSettings)
     detection: DetectionSettings = field(default_factory=DetectionSettings)
     ppo: PPOSettings = field(default_factory=PPOSettings)
@@ -216,6 +232,62 @@ class Settings:
     def database_url(self) -> str:
         """Backward-compatible alias for db.sync_url."""
         return self.db.sync_url
+
+    @property
+    def DATA_DIR(self) -> Path:
+        return DATA_DIR
+
+    @property
+    def data_dir(self) -> Path:
+        return DATA_DIR
+
+    @property
+    def RULES_DIR(self) -> Path:
+        return RULES_DIR
+
+    @property
+    def rules_dir(self) -> Path:
+        return RULES_DIR
+
+    @property
+    def PROJECT_ROOT(self) -> Path:
+        return PROJECT_ROOT
+
+    @property
+    def project_root(self) -> Path:
+        return PROJECT_ROOT
+
+    @property
+    def BLUE_AGENT_ROOT(self) -> Path:
+        return BLUE_AGENT_ROOT
+
+    @property
+    def blue_agent_root(self) -> Path:
+        return BLUE_AGENT_ROOT
+
+    @property
+    def MODELS_DIR(self) -> Path:
+        return MODELS_DIR
+
+    @property
+    def models_dir(self) -> Path:
+        return MODELS_DIR
+
+    @property
+    def PATCHES_DIR(self) -> Path:
+        return PATCHES_DIR
+
+    @property
+    def patches_dir(self) -> Path:
+        return PATCHES_DIR
+
+    @property
+    def LOGS_DIR(self) -> Path:
+        return LOGS_DIR
+
+    @property
+    def logs_dir(self) -> Path:
+        return LOGS_DIR
 
 
 # Singleton

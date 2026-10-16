@@ -16,11 +16,14 @@ RUN python -m pip install --no-cache-dir --default-timeout=600 --retries=20 \
 
 COPY blue_agent/ /app/blue_agent/
 COPY red_agent/ /app/red_agent/
+COPY green_agent/ /app/green_agent/
 COPY target_platform/ /app/target_platform/
 COPY targets/ /app/targets/
 COPY target_gateway/ /app/target_gateway/
 COPY models/ /app/models/
 COPY rules/ /app/rules/
+COPY evaluation/ /app/evaluation/
+COPY mtd/ /app/mtd/
 COPY target_app/requirements.txt /app/target_app/requirements.txt
 RUN python -m pip install --default-timeout=300 --retries=10 -r /app/target_app/requirements.txt
 RUN python -m pip install --no-cache-dir pip-audit semgrep

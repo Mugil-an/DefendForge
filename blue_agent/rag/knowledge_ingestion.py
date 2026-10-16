@@ -88,7 +88,63 @@ def ingest_initial_knowledge(retriever: Retriever) -> int:
 
     texts = [item["text"] for item in INITIAL_KNOWLEDGE]
     metadatas = [item["metadata"] for item in INITIAL_KNOWLEDGE]
-    
+
     doc_ids = retriever.add_texts(texts, metadatas)
     log.info("rag_initial_knowledge_ingested", count=len(doc_ids))
     return len(doc_ids)
+
+
+def ingest_remediation_outcome(
+    retriever: Retriever,
+    attack_type: str,
+    endpoint: str,
+    technique_id: str,
+    technique_name: str,
+    payload_summary: str,
+    mitigation_applied: str,
+    outcome: str,
+    confidence: float = 1.0,
+) -> str | None:
+    """
+    Store a real-world attack+mitigation pair into the knowledge base.
+
+    Called after every SUCCESSFUL or FAILED remediation so the Blue
+    Agent can retrieve similar past defenses in future rounds via RAG.
+
+    Returns the doc_id of the stored entry, or None on failure.
+    """
+    status_label = "SUCCESSFUL MITIGATION" if outcome == "SUCCESS" else "FAILED MITIGATION (avoid this approach)"
+
+    text = (
+        f"[{status_label}] "
+        f"Attack: {attack_type} | Endpoint: {endpoint} | "
+        f"MITRE: {technique_id} {technique_name} | "
+        f"Payload pattern: {payload_summary} | "
+        f"Mitigation applied: {mitigation_applied} | "
+        f"Confidence: {confidence:.2f}"
+    )
+
+    metadata = {
+        "source": "DefendForge-AutoLearned",
+        "category": "Learned-Remediation",
+        "attack_type": attack_type,
+        "endpoint": endpoint,
+        "technique_id": technique_id,
+        "outcome": outcome,
+        "confidence": confidence,
+    }
+
+    try:
+        ids = retriever.add_texts([text], [metadata])
+        doc_id = ids[0] if ids else None
+        log.info(
+            "rag_remediation_ingested",
+            attack_type=attack_type,
+            technique_id=technique_id,
+            outcome=outcome,
+            doc_id=doc_id,
+        )
+        return doc_id
+    except Exception as exc:
+        log.warning("rag_remediation_ingest_failed", error=str(exc))
+        return None

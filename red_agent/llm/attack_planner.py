@@ -17,8 +17,8 @@ class AutonomousAttackPlanner:
     reconnaissance data and MITRE ATT&CK context.
     """
     
-    def __init__(self, model_name: str = "llama3", api_url: str = None):
-        self.model_name = red_settings.llm_model if hasattr(red_settings, 'llm_model') else model_name
+    def __init__(self, model_name: str = "llama3.3", api_url: str = None):
+        self.model_name = os.getenv("RED_LLM_MODEL") or (red_settings.llm_model if hasattr(red_settings, 'llm_model') else model_name)
         self.api_url = api_url or os.getenv("LLM_BASE_URL", "http://host.docker.internal:11434")
         self.client = httpx.Client(timeout=30.0)
         self.conversation_history: List[Dict[str, str]] = []

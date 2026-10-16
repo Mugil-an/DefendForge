@@ -23,7 +23,7 @@ class HealthChecker:
     def check_database(self) -> Dict[str, Any]:
         """Check PostgreSQL/SQLite connectivity."""
         try:
-            engine = create_engine(settings.db.sync_url)
+            engine = create_engine(settings.db.sync_url, connect_args={"connect_timeout": 2})
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             engine.dispose()
@@ -49,12 +49,21 @@ class HealthChecker:
         """Check target app reachability."""
         url = f"{settings.audit.target_app_url.rstrip('/')}/health"
         try:
-            with httpx.Client(timeout=3.0) as client:
+            with httpx.Client(timeout=1.5) as client:
                 response = client.get(url)
                 response.raise_for_status()
             return {"status": "ok", "message": "Target app reachable"}
         except Exception as e:
-            log.warning("target_app_health_check_failed", error=str(e))
+            # If gateway is not up yet during initial boot, check target_app directly
+            if "gateway" in url or "8080" in url:
+                try:
+                    with httpx.Client(timeout=1.0) as client:
+                        resp = client.get("http://target_app:5000/health")
+                        if resp.status_code == 200:
+                            return {"status": "ok", "message": "Target app reachable (direct)"}
+                except Exception:
+                    pass
+            log.debug("target_app_health_check_failed", error=str(e))
             return {"status": "error", "message": str(e)}
 
     def get_system_info(self) -> Dict[str, Any]:

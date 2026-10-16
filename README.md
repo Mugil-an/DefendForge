@@ -27,7 +27,7 @@ The Blue Agent analyzes logs and traffic, makes decisions using a PPO (Proximal 
 The full system is containerized and orchestrated via Docker Compose, including the following services:
 - **target_app**: The vulnerable application (Flask) under test.
 - **target_gateway**: A proxy that routes traffic to the `target_app`, enforcing Red Agent signature validation and capturing gateway events.
-- **blue_agent**: The autonomous defender API. It uses PPO RL for decision making and escalates to an LLM (default: Ollama with Llama3).
+- **blue_agent**: The autonomous defender API. It uses PPO RL for decision making and escalates to an LLM (primary: Google Gemini 3.8 Flash, fallback: Ollama/OpenAI).
 - **red_agent**: Runs bounded autonomous campaigns, signing requests to the gateway and conducting security audits.
 - **flow_sniffer**: Captures raw network flows in the target's network namespace and reports them to the Blue Agent.
 - **db (PostgreSQL + pgvector)**: Stores the Blue Agent's "memory" (historical events, attack patterns, and successful mitigations) and enables vector search for RAG.
@@ -58,7 +58,7 @@ The DefendForge system operates continuously through a multi-stage attack and de
 1. **Reconnaissance (RECON)**: The Red Agent discovers available endpoints on the Target Application and performs audits (e.g., `pip-audit`, `npm audit`, `semgrep`) against a read-only workspace to formulate its campaign.
 2. **Traffic Generation**: Both legitimate (Green) and attack (Red) requests are routed through the `target_gateway`. Red requests are cryptographically signed to maintain ground-truth provenance for evaluation.
 3. **Detection (DETECT)**: The Blue Agent monitors the normalized gateway events alongside raw network traffic captured by the `flow_sniffer`, using anomaly detection models to identify threats.
-4. **Decision & Routing (ROUTE)**: Identified threats are routed to the Blue Agent's decision engine, which uses a PPO Reinforcement Learning model to pick a strategy, escalating to an LLM (e.g., Llama3) for novel or complex attack vectors.
+4. **Decision & Routing (ROUTE)**: Identified threats are routed to the Blue Agent's decision engine, which uses a PPO Reinforcement Learning model to pick a strategy, escalating to an LLM (e.g., Gemini 3.8 Flash) for novel or complex attack vectors.
 5. **Remediation (REMEDIATE)**: Leveraging RAG (Retrieval-Augmented Generation) backed by pgvector, the system constructs a defense. This may involve generating WAF rules, blocklisting IPs, or generating automated code patches.
 6. **Validation (VALIDATE)**: The Safety Broker runs target-specific tests (e.g., containerized test suites) against any proposed code changes. If validation fails or times out, the system automatically rolls back to prevent application downtime.
 7. **Hardening (HARDEN)**: Validated defenses are finalized, and the Blue Agent's memory (PostgreSQL + pgvector) is updated. This persistent state tracks successful mitigations and past failures, ensuring the system adapts and learns over time.
@@ -68,7 +68,7 @@ The DefendForge system operates continuously through a multi-stage attack and de
 To understand how the system goes from a fresh start to an intelligent defender:
 
 1. **System Initialization**: Running `docker-compose up` boots the vulnerable `target_app`, the storage engines (PostgreSQL/pgvector, Elasticsearch, Minio), and the `target_gateway` which shields the app.
-2. **Blue Agent Readiness**: The Blue Agent loads its baseline PPO Reinforcement Learning policy, connects to the LLM (e.g., Llama3), and initializes its RAG knowledge base. At first, its specific memory of this app's vulnerabilities is a clean slate.
+2. **Blue Agent Readiness**: The Blue Agent loads its baseline PPO Reinforcement Learning policy, connects to the LLM (e.g., Gemini 3.8 Flash), and initializes its RAG knowledge base. At first, its specific memory of this app's vulnerabilities is a clean slate.
 3. **Red Agent Engagement**: An autonomous campaign is triggered via the API or dashboard. The Red Agent maps the `target_app`'s attack surface and launches live exploits (e.g., SQLi, XSS, Path Traversal).
 4. **Knowledge Generation**: As the Blue Agent detects these zero-day or unpatched attacks, it queries pgvector for similar known threats. If it lacks a known defense, it escalates the event to the LLM to dynamically generate a remediation strategy (such as a WAF rule or a Python code patch).
 5. **Continuous Learning**: When the Safety Broker validates that a newly generated patch successfully stops the attack without breaking the app, the Blue Agent converts this scenario into vector embeddings. It stores the attack pattern and the successful mitigation in its pgvector memory. During future rounds, if the Red Agent attempts a similar attack, the Blue Agent instantly retrieves this acquired knowledge via RAG and mitigates the threat autonomously, bypassing the slower LLM escalation.
@@ -77,7 +77,7 @@ To understand how the system goes from a fresh start to an intelligent defender:
 
 - **Detection**: Real-time traffic analysis and anomaly detection (aided by `flow_sniffer`).
 - **Decision Engine (PPO RL)**: Reinforcement Learning model to decide on mitigation actions.
-- **LLM Reasoning**: Escalation to Large Language Models (e.g., Llama3 via Ollama) for complex, unseen attacks.
+- **LLM Reasoning**: Escalation to Large Language Models (primary: Google Gemini 3.8 Flash, with local Ollama fallback) for complex, unseen attacks.
 - **RAG (Knowledge Ingestion)**: Dynamically fetches mitigation strategies from a built-in cybersecurity knowledge base using pgvector.
 - **Remediation & Hardening**: Automated code patching, WAF rule generation, and IP blocklisting.
 - **Memory**: Tracks past attacks and successful mitigations to avoid repeated mistakes, stored in PostgreSQL with pgvector.

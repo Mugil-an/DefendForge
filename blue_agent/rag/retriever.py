@@ -1,5 +1,7 @@
 """
 Retriever Module — High-level interface for querying the RAG knowledge base.
+
+Works with both FAISS and pgvector backends transparently.
 """
 
 from __future__ import annotations
@@ -8,20 +10,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from blue_agent.logging_cfg import get_logger
 from blue_agent.rag.embeddings import embed_text
-from blue_agent.rag.vector_store import Document, FaissVectorStore
+from blue_agent.rag.vector_store import Document, FaissVectorStore, get_vector_store
 
 log = get_logger("rag.retriever")
 
 
 class Retriever:
     """
-    Combines text embedding and FAISS search into a simple retrieve API.
+    Combines text embedding and vector store search into a simple retrieve API.
+    Works with FAISS and pgvector backends.
     """
 
-    def __init__(self, vector_store: Optional[FaissVectorStore] = None):
-        self.store = vector_store or FaissVectorStore()
-        # Ensure it is initialized / loaded
-        if self.store._index is None:
+    def __init__(self, vector_store=None):
+        self.store = vector_store or get_vector_store()
+        # Ensure it is initialized / loaded (FAISS needs this; pgvector is a no-op)
+        if hasattr(self.store, '_index') and getattr(self.store, '_index', None) is None:
             self.store.initialize()
 
     def add_texts(self, texts: List[str], metadatas: Optional[List[Dict[str, Any]]] = None) -> List[str]:

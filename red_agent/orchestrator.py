@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import time
+import uuid
+import httpx
+import random
+
 from typing import List, Dict
 
 from red_agent.traffic_generator import TrafficGenerator
@@ -10,6 +15,7 @@ from red_agent.autonomous_campaign import AutonomousCampaign, AutonomousCampaign
 from red_agent.memory import RedMemory
 from red_agent.audit_runner import run_audits
 from red_agent.config import red_settings
+from red_agent.provenance import signed_provenance_headers
 from target_platform.registry import TargetRegistry
 from blue_agent.logging_cfg import get_logger
 
@@ -27,17 +33,221 @@ class RedAgent:
         self._autonomous_in_progress = False
         self._autonomous_progress: Dict = {}
         self._memory = RedMemory()
+        self._target_surface: Any = None
     
     @property
     def memory(self) -> RedMemory:
         return self._memory
 
+    def set_target_surface(self, surface: Any) -> None:
+        """Register the active target surface discovered for the campaign."""
+        self._target_surface = surface
+        log.info("red_agent_target_surface_registered", total_routes=getattr(surface, "total_routes", 0))
+
+    def _execute_live_scenario(self, result: ScenarioResult) -> ScenarioResult:
+        """Transmit scenario events as real, cryptographically signed HTTP requests to the target."""
+        target_url = red_settings.target_url.rstrip("/")
+        timeout = red_settings.request_timeout
+        campaign_id = f"scenario-{uuid.uuid4().hex[:8]}"
+
+        live_traffic = []
+        live_truth = []
+
+        try:
+            with httpx.Client(base_url=target_url, timeout=timeout) as client:
+                for idx, evt in enumerate(result.traffic):
+                    endpoint = evt.get("endpoint", "/")
+                    method = evt.get("method", "GET").upper()
+                    params = evt.get("params", {})
+                    req_id = str(uuid.uuid4())
+                    headers = signed_provenance_headers(campaign_id, req_id)
+
+                    t0 = time.perf_counter()
+                    resp_code = 599
+                    resp_size = 0
+                    try:
+                        if method == "POST":
+                            resp = client.post(endpoint, data=params, headers=headers)
+                        else:
+                            resp = client.get(endpoint, params=params, headers=headers)
+                        resp_code = resp.status_code
+                        resp_size = len(resp.content)
+                    except Exception as req_err:
+                        log.debug("scenario_http_request_error", endpoint=endpoint, error=str(req_err))
+
+                    duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+                    updated_evt = {
+                        **evt,
+                        "request_id": req_id,
+                        "campaign_id": campaign_id,
+                        "response_code": resp_code,
+                        "response_time_ms": duration_ms,
+                        "body_size": resp_size,
+                    }
+                    live_traffic.append(updated_evt)
+
+                    gt = dict(result.ground_truth[idx]) if idx < len(result.ground_truth) else {}
+                    gt["response_code"] = resp_code
+                    live_truth.append(gt)
+
+            return ScenarioResult(
+                name=result.name,
+                traffic=live_traffic,
+                ground_truth=live_truth,
+                description=f"Live HTTP execution of {result.name} against {target_url}",
+            )
+        except Exception as exc:
+            log.warning("scenario_live_execution_failed_falling_back", error=str(exc))
+            return result
+
     def run_scenario(self, scenario_name: str) -> ScenarioResult:
-        """Run a named attack scenario."""
+        """Run a named attack scenario using real live HTTP by default."""
         scenario = get_scenario(scenario_name, self._generator)
         result = scenario.generate()
+
+        if not red_settings.simulation_only:
+            result = self._execute_live_scenario(result)
+
         self._attack_log.extend(result.ground_truth)
         return result
+
+    def execute_single_attack(
+        self,
+        attack_type: str = "sql_injection",
+        endpoint: str | None = None,
+        method: str | None = None,
+        param_name: str | None = None,
+        payload_str: str | None = None,
+        target_url: str | None = None,
+        evasion: str | None = None,
+        target_surface: Any | None = None,
+    ) -> Dict[str, Any]:
+        """Execute a single real HTTP attack against the target container."""
+        from red_agent.payloads import get_payloads
+        from red_agent.guardrails import TargetGuard
+        from red_agent.evasion import EvasionEngine
+        import re
+
+        target_url = (target_url or red_settings.target_url).rstrip("/")
+        TargetGuard.allow_target(target_url)
+
+        # Look up category payload if parameters not provided
+        category_payloads = get_payloads(attack_type)
+        default_payload = category_payloads[0] if category_payloads else None
+
+        active_surface = target_surface or getattr(self, "_target_surface", None)
+
+        req_endpoint = endpoint
+        req_method = method
+        req_param = param_name
+
+        # If endpoint not provided, check dynamic target surface
+        if not req_endpoint and active_surface and hasattr(active_surface, "get_endpoints_for_attack"):
+            candidates = active_surface.get_endpoints_for_attack(attack_type)
+            if candidates:
+                cand = random.choice(candidates)
+                req_endpoint = cand.path
+                req_method = cand.method
+                req_param = cand.parameters[0] if cand.parameters else None
+
+        # Fallback to default payload endpoint if still unresolved
+        req_endpoint = req_endpoint or (default_payload.target_endpoint if default_payload else "/login")
+        req_method = (req_method or (default_payload.method if default_payload else "POST")).upper()
+        req_param = req_param or (default_payload.param_name if default_payload else "username")
+        actual_payload = payload_str if payload_str is not None else (default_payload.payload if default_payload else "' OR 1=1--")
+
+        # Apply evasion mutation if requested
+        if evasion and evasion != "none":
+            try:
+                evasion_engine = EvasionEngine()
+                actual_payload = evasion_engine.apply(evasion, actual_payload)
+            except Exception:
+                pass
+
+        # Handle path template substitution (e.g. /users/{user_id})
+        if "{" in req_endpoint and "}" in req_endpoint:
+            req_endpoint = re.sub(r"\{[a-zA-Z0-9_]+\}", str(actual_payload), req_endpoint)
+
+        # Format parameters
+        params: Dict[str, Any] = {}
+        if req_param and "{" not in req_endpoint:
+            params[req_param] = actual_payload
+        elif actual_payload and "{" not in req_endpoint:
+            params["q"] = actual_payload
+
+        # Endpoint-specific parameter conveniences
+        if req_endpoint == "/login" and "password" not in params:
+            if attack_type == "brute_force" and ":" in str(actual_payload):
+                u, p = actual_payload.split(":", 1)
+                params["username"] = u
+                params["password"] = p
+            else:
+                params["password"] = "password123"
+
+        campaign_id = f"single-{uuid.uuid4().hex[:8]}"
+        req_id = str(uuid.uuid4())
+        headers = signed_provenance_headers(campaign_id, req_id)
+
+        if attack_type == "reconnaissance" and actual_payload:
+            headers["User-Agent"] = str(actual_payload)
+
+        resp_code = 500
+        resp_size = 0
+        resp_snippet = ""
+        duration_ms = 0.0
+
+        t0 = time.perf_counter()
+        try:
+            with httpx.Client(base_url=target_url, timeout=red_settings.request_timeout) as client:
+                if req_method == "POST":
+                    resp = client.post(req_endpoint, data=params, headers=headers)
+                elif req_method == "PUT":
+                    resp = client.put(req_endpoint, data=params, headers=headers)
+                elif req_method == "DELETE":
+                    resp = client.delete(req_endpoint, params=params, headers=headers)
+                else:
+                    resp = client.get(req_endpoint, params=params, headers=headers)
+
+                resp_code = resp.status_code
+                resp_size = len(resp.content)
+                resp_snippet = resp.text[:300]
+        except Exception as exc:
+            log.warning("single_attack_live_http_failed", endpoint=req_endpoint, error=str(exc))
+            resp_code = 502
+            resp_snippet = f"Connection error: {str(exc)}"
+
+        duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+        traffic_event = {
+            "source": "10.0.0.66",
+            "endpoint": req_endpoint,
+            "method": req_method,
+            "params": params,
+            "payload": actual_payload,
+            "response_code": resp_code,
+            "response_time_ms": duration_ms,
+            "body_size": resp_size,
+            "timestamp": time.time(),
+            "request_id": req_id,
+            "campaign_id": campaign_id,
+            "user_agent": headers.get("User-Agent", "DefendForge-RedAgent/1.0"),
+            "is_attack": True,
+            "attack_type": attack_type,
+            "severity": default_payload.severity if default_payload else "high",
+            "evasion": evasion or "none",
+            "response_snippet": resp_snippet,
+        }
+
+        self._attack_log.append({
+            "request_id": req_id,
+            "is_attack": True,
+            "attack_type": attack_type,
+            "severity": traffic_event["severity"],
+            "response_code": resp_code,
+            "exploit_success": resp_code in (200, 500),
+        })
+
+        return traffic_event
 
     def run_target_audit(self, target_name: str = "default") -> Dict:
         """Run the registered target's allowlisted read-only audits."""
@@ -162,9 +372,16 @@ class RedAgent:
             self._autonomous_in_progress = False
 
         # Also extend the attack log for backward compatibility
-        self._attack_log.extend(self._autonomous_result.ground_truth)
+        if self._autonomous_result:
+            self._attack_log.extend(self._autonomous_result.ground_truth)
 
         return self._autonomous_result
+
+    def stop_autonomous_campaign(self) -> None:
+        """Signal the running autonomous campaign to halt."""
+        if self._autonomous_campaign:
+            self._autonomous_campaign._stop_requested = True
+        self._autonomous_in_progress = False
 
     def get_campaign_status(self) -> Dict:
         """Return a serializable snapshot of the latest autonomous campaign."""

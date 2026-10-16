@@ -110,3 +110,19 @@ class TestRedAgent:
         agent = RedAgent(seed=42)
         result = agent.run_continuous(total_events=15, benign_ratio=0.4)
         assert len(result.traffic) == 15
+
+    def test_execute_single_attack(self):
+        agent = RedAgent(seed=42)
+        event = agent.execute_single_attack(
+            attack_type="sql_injection",
+            endpoint="/login",
+            method="POST",
+            payload_str="' OR 1=1--",
+        )
+        assert event["is_attack"] is True
+        assert event["attack_type"] == "sql_injection"
+        assert event["endpoint"] == "/login"
+        assert event["method"] == "POST"
+        assert "response_code" in event
+        assert len(agent.get_attack_log()) > 0
+

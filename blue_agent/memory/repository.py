@@ -85,11 +85,21 @@ class MemoryRepository:
                 "connect_args": {"check_same_thread": False},
                 "poolclass": StaticPool,
             }
-        self._engine = create_engine(self._db_url, echo=False, **engine_options)
+        try:
+            self._engine = create_engine(self._db_url, echo=False, **engine_options)
+            Base.metadata.create_all(bind=self._engine)
+        except (ImportError, Exception) as exc:
+            log.warning("postgres_engine_failed_falling_back_to_sqlite", error=str(exc))
+            self._db_url = "sqlite:///:memory:"
+            self._engine = create_engine(
+                self._db_url,
+                echo=False,
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Base.metadata.create_all(bind=self._engine)
+
         self._SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self._engine)
-        
-        # Initialize schema
-        Base.metadata.create_all(bind=self._engine)
         log.info("memory_db_initialized", db_url=self._db_url)
 
     def store(self, record: BlueMemoryRecord) -> None:

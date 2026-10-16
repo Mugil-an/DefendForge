@@ -36,18 +36,9 @@ class LiveCampaign:
         evaluator: AdaptiveEvaluator | None = None,
         campaign_id: str | None = None,
     ) -> None:
-        parsed = urlparse(target_url)
-        if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-            "target_app",
-            "target-app",
-        }:
-            raise ValueError("live campaigns are restricted to the bundled local target")
-        self.target_url = target_url.rstrip("/") + "/"
         self.guard = TargetGuard()
         self.guard.validate(target_url)
+        self.target_url = target_url.rstrip("/") + "/"
         self.knowledge = knowledge or AttackKnowledge()
         self.state = CampaignState(
             max_rounds=max(0, min(max_rounds, 100)),

@@ -23,13 +23,63 @@ from blue_agent.schemas import AttackEvent, LLMAnalysis, Patch, PatchOrigin
 log = get_logger("remediation.patch_generator")
 
 
+import os
+from pathlib import Path
+from blue_agent.config import PROJECT_ROOT, settings
+
 class PatchGenerator:
     """
     Generates remediation patches based on attack events and LLM analysis.
 
-    Supports template-based patching for all known vulnerabilities in the
-    Target Application, with LLM fallback for unknown vulnerability types.
+    Supports dynamic LLM-driven patch generation by inspecting actual source files,
+    with template fallbacks for offline demo environments.
     """
+
+    def _locate_vulnerable_file(self, endpoint: str, component: str = "") -> tuple[Optional[Path], str]:
+        """Dynamically locate the source code file handling this endpoint or component."""
+        target_root = Path(settings.audit.target_app_path or (PROJECT_ROOT / "target_app"))
+        if not target_root.exists() or not target_root.is_dir():
+            target_root = Path("/target") if os.path.exists("/target") else (PROJECT_ROOT / "target_app")
+
+        # Check if component points to an existing file
+        if component:
+            comp_path = target_root / component
+            if comp_path.is_file():
+                try:
+                    rel = str(comp_path.relative_to(target_root)).replace("\\", "/")
+                except ValueError:
+                    rel = comp_path.name
+                return comp_path, rel
+
+        clean_ep = endpoint.strip("/")
+        # Search for route handler in source files
+        if target_root.is_dir():
+            for ext in ("*.py", "*.js", "*.ts", "*.go", "*.php", "*.rb"):
+                for path in target_root.rglob(ext):
+                    if not path.is_file():
+                        continue
+                    try:
+                        content = path.read_text(encoding="utf-8", errors="ignore")
+                        if endpoint and (f'"{endpoint}"' in content or f"'{endpoint}'" in content or (clean_ep and clean_ep in content)):
+                            try:
+                                rel = str(path.relative_to(target_root)).replace("\\", "/")
+                            except ValueError:
+                                rel = path.name
+                            return path, rel
+                    except Exception:
+                        continue
+
+            # Fallback to main app files
+            for candidate in ("app.py", "main.py", "server.js", "index.js", "web_app.py", "run.py"):
+                cand_path = target_root / candidate
+                if cand_path.is_file():
+                    try:
+                        rel = str(cand_path.relative_to(target_root)).replace("\\", "/")
+                    except ValueError:
+                        rel = candidate
+                    return cand_path, rel
+
+        return None, "target_app/app.py"
 
     def generate_patch(
         self,
@@ -39,13 +89,26 @@ class PatchGenerator:
     ) -> Optional[Patch]:
         """
         Generate a patch based on the event and optional LLM analysis.
+        Prefers real LLM generation against actual source code files,
+        with template fallbacks for standard offline demo runs.
         """
         log.info("generating_patch", event_id=event.event_id, attack_type=event.attack_type)
 
         attack_type = event.attack_type.lower()
         endpoint = event.endpoint.lower()
 
-        # SQL Injection patches
+        # Reconnaissance — no code patch needed, handled by hardening
+        if "recon" in attack_type or "scan" in attack_type:
+            log.info("recon_no_patch_needed", attack_type=attack_type)
+            return None
+
+        # 1. Try real dynamic LLM patch generation first
+        if analysis and getattr(analysis, "patch_required", False):
+            llm_patch = self._generate_llm_patch(event, analysis, context)
+            if llm_patch:
+                return llm_patch
+
+        # 2. Template fallbacks for bundled target application
         if "sql" in attack_type or "injection" in attack_type:
             if "/login" in endpoint:
                 return self._generate_sqli_login_patch()
@@ -54,42 +117,31 @@ class PatchGenerator:
             elif "/comments" in endpoint:
                 return self._generate_sqli_comments_patch()
 
-        # XSS patch
         if ("xss" in attack_type or "cross-site" in attack_type or "script" in attack_type) and "/greet" in endpoint:
             return self._generate_xss_greet_patch()
 
-        # Path Traversal patch
         if ("path" in attack_type or "traversal" in attack_type or "directory" in attack_type) and "/file" in endpoint:
             return self._generate_path_traversal_patch()
 
-        # Command Injection patch
         if ("command" in attack_type or "os command" in attack_type or "cmd" in attack_type) and "/ping" in endpoint:
             return self._generate_command_injection_patch()
 
-        # SSRF patch
         if ("ssrf" in attack_type or "server-side request" in attack_type) and "/fetch" in endpoint:
             return self._generate_ssrf_patch()
 
-        # Insecure Deserialization patch
         if ("deseriali" in attack_type or "pickle" in attack_type) and "/load" in endpoint:
             return self._generate_deserialization_patch()
 
-        # Broken Access Control patch
         if ("access control" in attack_type or "auth" in attack_type or "broken" in attack_type) and "/admin" in endpoint:
             return self._generate_broken_auth_patch()
 
-        # Brute Force — add rate limiting
         if "brute" in attack_type and "/login" in endpoint:
             return self._generate_rate_limit_patch()
 
-        # Reconnaissance — no code patch needed, handled by hardening
-        if "recon" in attack_type or "scan" in attack_type:
-            log.info("recon_no_patch_needed", attack_type=attack_type)
-            return None
-
-        # LLM fallback for unknown vulnerability types
-        if analysis and getattr(analysis, "patch_required", False):
-            return self._generate_llm_patch(event, analysis)
+        # 3. Final attempt: LLM patch even without prior explicit analysis flag
+        llm_patch = self._generate_llm_patch(event, analysis, context)
+        if llm_patch:
+            return llm_patch
 
         log.warning("no_patch_template_available", attack_type=event.attack_type, endpoint=event.endpoint)
         return None
@@ -370,43 +422,86 @@ class PatchGenerator:
         )
 
     # -----------------------------------------------------------------------
-    # LLM Fallback
+    # Dynamic LLM Patch Generation
     # -----------------------------------------------------------------------
-    def _generate_llm_patch(self, event: AttackEvent, analysis: LLMAnalysis) -> Optional[Patch]:
-        """Use LLM to generate a patch for unknown vulnerability types."""
+    def _generate_llm_patch(
+        self,
+        event: AttackEvent,
+        analysis: Optional[LLMAnalysis] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Patch]:
+        """Dynamically use LLM to inspect actual source code on disk and generate a unified diff."""
         try:
             from blue_agent.llm.llm_client import LLMClient
             client = LLMClient()
-            prompt = f"""Generate a unified diff patch to fix this vulnerability:
 
+            affected_comp = analysis.affected_component if analysis else ""
+            file_path, rel_path = self._locate_vulnerable_file(event.endpoint, affected_comp)
+
+            code_snippet = ""
+            if file_path and file_path.is_file():
+                try:
+                    code_snippet = file_path.read_text(encoding="utf-8", errors="replace")
+                    lines = code_snippet.splitlines()
+                    if len(lines) > 500:
+                        code_snippet = "\n".join(lines[:500]) + "\n... [truncated]"
+                except Exception as exc:
+                    log.warning("failed_reading_target_file_for_patch", error=str(exc))
+
+            root_cause = analysis.root_cause if analysis else f"Vulnerability exposed at {event.endpoint}"
+            strategy = analysis.patch_strategy if analysis else f"Remediate {event.attack_type}"
+
+            system_prompt = (
+                "You are an expert cybersecurity software engineer and automated patch generator.\n"
+                "Your job is to generate a clean, minimal, syntactically correct unified diff patch "
+                "that fixes the vulnerability while keeping existing functionality working.\n"
+                "RULES:\n"
+                "1. Output ONLY the unified diff inside a ```diff code block.\n"
+                f"2. The unified diff header MUST start with '--- a/{rel_path}' and '+++ b/{rel_path}'.\n"
+                "3. Ensure the context lines match the source code provided exactly.\n"
+                "4. Do NOT include markdown commentary outside the ```diff block."
+            )
+
+            user_prompt = f"""Target File: {rel_path}
 Attack Type: {event.attack_type}
 Endpoint: {event.endpoint}
-Root Cause: {analysis.root_cause}
-Affected Component: {analysis.affected_component}
-Patch Strategy: {analysis.patch_strategy}
+Severity: {event.severity.value if hasattr(event.severity, 'value') else event.severity}
+Root Cause: {root_cause}
+Remediation Strategy: {strategy}
 
-Generate ONLY the unified diff (no explanation). The target file is target_app/app.py."""
+Current Source Code of {rel_path}:
+```
+{code_snippet}
+```
 
-            # Use the LLM to generate diff text
-            response = client.client.chat.completions.create(
-                model=client._model,
-                messages=[
-                    {"role": "system", "content": "You are a security patch generator. Output only unified diff format."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-            )
-            diff_text = response.choices[0].message.content.strip()
-            # Strip markdown code fences if present
-            if diff_text.startswith("```"):
-                lines = diff_text.split("\n")
-                diff_text = "\n".join(lines[1:-1])
+Generate the unified diff now."""
+
+            diff_text = client.generate_text(system_prompt, user_prompt, temperature=0.1)
+
+            # Extract diff from code block if present
+            if "```diff" in diff_text:
+                diff_text = diff_text.split("```diff", 1)[1].split("```", 1)[0]
+            elif "```" in diff_text:
+                parts = diff_text.split("```")
+                if len(parts) >= 3:
+                    diff_text = parts[1]
+                else:
+                    diff_text = diff_text.replace("```", "")
+            diff_text = diff_text.strip()
+
+            if not diff_text or "@@" not in diff_text:
+                log.warning("llm_patch_missing_diff_hunks", output=diff_text[:200])
+                return None
+
+            # Ensure proper unified diff headers if missing
+            if not diff_text.startswith("--- "):
+                diff_text = f"--- a/{rel_path}\n+++ b/{rel_path}\n" + diff_text
 
             return Patch(
                 patch_id=str(uuid.uuid4()),
-                files_changed=["target_app/app.py"],
+                files_changed=[rel_path],
                 diff=diff_text,
-                strategy=analysis.patch_strategy,
+                strategy=strategy,
                 generated_by=PatchOrigin.LLM,
             )
         except Exception as e:

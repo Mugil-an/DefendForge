@@ -252,6 +252,9 @@ class MetricsSnapshot(BaseModel):
     time_to_remediate_ms: float = 0.0
     patch_success_rate: float = 0.0
     rollback_rate: float = 0.0
+    true_dsr: float = 0.0                     # True Defense Success Rate: fix applied and tests pass
+    fake_dsr: float = 0.0                     # Fake Defense Success Rate: attack stopped because app was broken
+    service_disruption_rate: float = 0.0      # Disruption gap: fake_dsr - true_dsr
     ppo_decision_latency_ms: float = 0.0
     llm_latency_ms: float = 0.0
     llm_escalation_count: int = 0

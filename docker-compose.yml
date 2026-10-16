@@ -96,13 +96,15 @@ services:
       - "5601:5601"
     depends_on:
       - elasticsearch
+    networks:
+      - blue_net
 
   blue_agent:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "${BLUE_AGENT_PORT:-8000}:8000"
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
@@ -113,11 +115,16 @@ services:
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-admin}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me-minio}
       ELASTICSEARCH_URL: http://elasticsearch:9200
-      LLM_PROVIDER: ollama
-      LLM_MODEL: llama3
+      # LLM — Gemini 3.8 Flash (primary) with Ollama fallback
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.8-flash}
       LLM_API_KEY: dummy
+      # Detection & RL
       PPO_MODEL_PATH: models/ppo_policy.zip
       DETECTION_MODEL_PATH: models/random_forest_24.joblib
+      # Target & validation
       TARGET_APP_URL: http://target_gateway:8080
       VALIDATION_HEALTH_URL: http://target_gateway:8080/health
       RED_TARGET_URL: http://target_gateway:8080
@@ -132,10 +139,17 @@ services:
         condition: service_started
       elasticsearch:
         condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./blue_agent:/app/blue_agent
       - ./red_agent:/app/red_agent
+      - ./green_agent:/app/green_agent
+      - ./target_platform:/app/target_platform
+      - ./evaluation:/app/evaluation
+      - ./mtd:/app/mtd
       - ./target_app:/app/target_app
+      - ${TARGET_SOURCE_PATH:-./target_app}:/target
       - ./rules:/app/rules
       - ./models:/app/models
     networks:
@@ -145,29 +159,48 @@ services:
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
-      timeout: 5s
-      retries: 30
+      timeout: 10s
+      start_period: 20s
+      retries: 5
 
   red_agent:
     build:
       context: .
       dockerfile: Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       BLUE_API_URL: http://blue_agent:8000
-      RED_CAMPAIGN_ROUNDS: 5
-      RED_CAMPAIGN_EVENTS: 25
+      # Manual launch: Red Agent waits indefinitely until triggered manually by the user via the UI/API
+      RED_AUTO_START: ${RED_AUTO_START:-false}
+      RED_WARMUP_SECONDS: ${RED_WARMUP_SECONDS:-30}
+      RED_CAMPAIGN_ROUNDS: ${RED_CAMPAIGN_ROUNDS:-5}
+      RED_CAMPAIGN_EVENTS: ${RED_CAMPAIGN_EVENTS:-25}
+      RED_CAMPAIGN_INTERVAL: ${RED_CAMPAIGN_INTERVAL:-60}
+      RED_MAX_CAMPAIGNS: ${RED_MAX_CAMPAIGNS:-0}
       RED_SIMULATION_ONLY: "false"
       RED_REQUEST_TIMEOUT: 5
       RED_TARGET_URL: http://target_gateway:8080
       TARGET_MANIFEST_DIR: /app/targets
       PROVENANCE_SECRET: ${PROVENANCE_SECRET:-local-development-secret}
+      # Persistent memory uses the same PostgreSQL instance
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: bluememory
     depends_on:
       blue_agent:
         condition: service_healthy
     volumes:
       - ./blue_agent:/app/blue_agent
       - ./red_agent:/app/red_agent
+      - ./green_agent:/app/green_agent
+      - ./target_platform:/app/target_platform
+      - ./evaluation:/app/evaluation
+      - ./mtd:/app/mtd
       - ./target_app:/app/target_app
+      - ${TARGET_SOURCE_PATH:-./target_app}:/target
       - ./rules:/app/rules
       - ./models:/app/models
     networks:

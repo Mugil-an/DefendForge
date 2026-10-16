@@ -60,3 +60,14 @@ class TestMetricsTracker:
         self.tracker.record_decision(ppo_latency_ms=5.0, escalated=True, llm_latency_ms=200.0)
         snapshot = self.tracker.get_snapshot()
         assert snapshot.llm_escalation_count == 1
+
+    def test_defense_success_rate_and_service_disruption(self):
+        # 3 successful patches, 1 rolled back patch
+        self.tracker.record_remediation(success=True)
+        self.tracker.record_remediation(success=True)
+        self.tracker.record_remediation(success=True)
+        self.tracker.record_remediation(success=False)
+        snapshot = self.tracker.get_snapshot()
+        assert snapshot.true_dsr == 0.75
+        assert snapshot.fake_dsr == 0.25
+        assert snapshot.service_disruption_rate == 0.25

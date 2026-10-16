@@ -458,27 +458,42 @@ function setupControls() {
     const fullAutonomousBtn = document.getElementById('full-autonomous-campaign');
     if (fullAutonomousBtn) {
         fullAutonomousBtn.addEventListener('click', async () => {
+            const targetUrlEl = document.getElementById('target-container-url');
+            const targetPathEl = document.getElementById('target-container-path');
+            const targetRoundsEl = document.getElementById('target-rounds');
+
+            const targetUrl = targetUrlEl ? targetUrlEl.value.trim() : 'http://target_gateway:8080';
+            const targetPath = targetPathEl ? targetPathEl.value.trim() : './target_app';
+            const rounds = targetRoundsEl ? (parseInt(targetRoundsEl.value) || 5) : 5;
+
             fullAutonomousBtn.disabled = true;
-            fullAutonomousBtn.textContent = 'Running...';
-            updateCampaignStatus({ status: 'started', rounds: 5, max_events: 50, mode: 'full_autonomous' });
+            fullAutonomousBtn.textContent = 'Arena Running...';
+            updateCampaignStatus({ status: 'started', rounds: rounds, max_events: rounds * 10, mode: 'arena' });
+            
             const apiUrl = window.location.protocol === 'file:'
-                ? 'http://localhost:8000/api/red/autonomous'
-                : '/api/red/autonomous';
+                ? 'http://localhost:8000/api/arena/start'
+                : '/api/arena/start';
             try {
                 const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rounds: 5, events_per_round: 10, use_llm: true })
+                    body: JSON.stringify({
+                        target_url: targetUrl,
+                        target_path: targetPath,
+                        rounds: rounds,
+                        events_per_round: 10,
+                        use_llm: true
+                    })
                 });
-                if (!response.ok) throw new Error(`Full Autonomous API failed (${response.status})`);
+                if (!response.ok) throw new Error(`Arena API failed (${response.status})`);
                 const result = await response.json();
                 updateCampaignStatus(result.campaign);
             } catch (error) {
                 updateCampaignStatus({ status: 'failed' });
-                console.error('Full Autonomous campaign failed:', error);
+                console.error('Arena campaign failed:', error);
             } finally {
                 fullAutonomousBtn.disabled = false;
-                fullAutonomousBtn.textContent = '🚀 Start Autonomous Attack';
+                fullAutonomousBtn.textContent = '⚔️ Launch Attack vs Defense';
             }
         });
     }

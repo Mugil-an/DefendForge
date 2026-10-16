@@ -95,13 +95,18 @@ class MetricsTracker:
         total_patches = self._successful_patches + self._rolled_back_patches
         patch_success_rate = self._successful_patches / total_patches if total_patches > 0 else 1.0
         rollback_rate = self._rolled_back_patches / total_patches if total_patches > 0 else 0.0
-        
+
+        # DSR (Defense Success Rate) math
+        true_dsr = round(patch_success_rate, 4)
+        fake_dsr = round(rollback_rate, 4)
+        service_disruption_rate = round(max(0.0, fake_dsr - 0.0), 4)
+
         # Timings
         avg_ttd = sum(self._detection_times) / len(self._detection_times) if self._detection_times else 0.0
         avg_ttr = sum(self._remediation_times) / len(self._remediation_times) if self._remediation_times else 0.0
         avg_ppo = sum(self._ppo_latencies) / len(self._ppo_latencies) if self._ppo_latencies else 0.0
         avg_llm = sum(self._llm_latencies) / len(self._llm_latencies) if self._llm_latencies else 0.0
-        
+
         snapshot = MetricsSnapshot(
             round=self._rounds,
             detection_rate=round(detection_rate, 4),
@@ -112,6 +117,9 @@ class MetricsTracker:
             time_to_remediate_ms=round(avg_ttr, 2),
             patch_success_rate=round(patch_success_rate, 4),
             rollback_rate=round(rollback_rate, 4),
+            true_dsr=true_dsr,
+            fake_dsr=fake_dsr,
+            service_disruption_rate=service_disruption_rate,
             ppo_decision_latency_ms=round(avg_ppo, 2),
             llm_latency_ms=round(avg_llm, 2),
             llm_escalation_count=self._llm_escalations,

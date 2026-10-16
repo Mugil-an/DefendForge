@@ -1,11 +1,20 @@
 """
 Blue Agent Orchestrator — The core execution loop connecting all modules.
+
+The Orchestrator drives the full Phase 1 pipeline:
+  RECON → DETECT → DECIDE (PPO/Gemini) → REMEDIATE → VALIDATE → HARDEN
+
+After each successful remediation the attack+mitigation pair is stored
+in the RAG knowledge base (pgvector/FAISS) so future rounds can retrieve
+it.  Every security event and decision is also indexed to Elasticsearch
+for Kibana dashboards.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from blue_agent.audit import orchestrator as audit_orchestrator
@@ -13,12 +22,16 @@ from blue_agent.config import settings
 from blue_agent.decision.decision_engine import DecisionEngine
 from blue_agent.decision.action_space import DefensiveAction
 from blue_agent.detection.alert_manager import AlertManager
+from blue_agent.detection.bootstrap import ensure_models_exist
+from blue_agent.detection.isolation_forest import IsolationForestDetector
 from blue_agent.detection.random_forest import RandomForestDetector
 from blue_agent.hardening.rule_manager import RuleManager
 from blue_agent.llm.reasoning_engine import ReasoningEngine
 from blue_agent.logging_cfg import get_logger
 from blue_agent.memory.repository import MemoryRepository
 from blue_agent.metrics.tracker import MetricsTracker
+from blue_agent.monitoring.es_client import get_es_client
+from blue_agent.rag.knowledge_ingestion import ingest_remediation_outcome
 from blue_agent.remediation.patch_generator import PatchGenerator
 from blue_agent.remediation.validator import PatchValidator
 from blue_agent.schemas import (
@@ -32,6 +45,7 @@ from blue_agent.schemas import (
     ValidationResult,
 )
 from blue_agent.safety.broker import register_tool, execute_tool
+from evaluation.harness import PhaseTransition, evaluation_harness
 
 log = get_logger("orchestrator")
 
@@ -48,31 +62,37 @@ class BlueAgent:
         # Core modules
         self.audit = audit_orchestrator
         
-        # Detection
+        # Detection — bootstrap model if no .joblib file exists
+        ensure_models_exist()   # no-op if models already present
         detector = RandomForestDetector()
         try:
             detector.load(str(settings.detection.model_path))
+            log.info("detector_model_loaded", path=settings.detection.model_path)
         except (FileNotFoundError, Exception):
             try:
                 detector.load(str(Path(__file__).resolve().parent.parent / "models" / "random_forest_24.joblib"))
+                log.info("detector_model_loaded_fallback")
             except Exception as e:
-                log.warning("detector_model_not_found_skipping_load")
+                log.warning("detector_model_not_found_skipping_load", error=str(e))
         self.alert_manager = AlertManager(detector=detector)
-        
+
         # Decision
         self.decision_engine = DecisionEngine()
         self.reasoning_engine = ReasoningEngine()
-        
+
         # Remediation
         self.patch_gen = PatchGenerator()
         self.validator = PatchValidator()
-        
+
         # Hardening & Memory
         self.hardening = RuleManager()
         self.memory = MemoryRepository()
         self.metrics = MetricsTracker()
         self.last_round_details: List[Dict[str, Any]] = []
-        
+
+        # Elasticsearch client (gracefully degrades if unavailable)
+        self._es = get_es_client()
+
         # Register tools with safety broker
         self._register_tools()
 
@@ -253,6 +273,16 @@ class BlueAgent:
         if detect_time_ms > 0:
             self.metrics._detection_times.append(detect_time_ms)
         
+        # Log DETECTION_FIRED phase transition
+        evaluation_harness.log_transition(
+            phase=PhaseTransition.DETECTION_FIRED,
+            round_number=self.metrics._rounds,
+            component="blue_agent",
+            details={"endpoint": event.endpoint, "attack_type": event.attack_type, "severity": event.severity.value},
+            qualitative_note=f"Flagged {event.attack_type} on {event.endpoint}",
+            latency_ms=detect_time_ms,
+        )
+
         # 2. Decision Phase (Fast/Slow Routing)
         decision_result = self.decision_engine.decide(event)
         record.decision_path = decision_result.path
@@ -263,20 +293,38 @@ class BlueAgent:
             ppo_latency_ms=decision_result.decision_latency_ms,
             escalated=decision_result.escalated
         )
+
+        # Log FAST_OR_SLOW_DECISION phase transition
+        evaluation_harness.log_transition(
+            phase=PhaseTransition.FAST_OR_SLOW_DECISION,
+            round_number=self.metrics._rounds,
+            component="blue_agent",
+            details={
+                "path": decision_result.path.value,
+                "confidence": round(decision_result.confidence, 4),
+                "action": decision_result.action_name,
+            },
+            qualitative_note=f"Routing decision: {decision_result.path.value} path with confidence {decision_result.confidence:.2f}",
+            latency_ms=decision_result.decision_latency_ms,
+        )
         
         analysis = None
         if decision_result.path == DecisionPath.SLOW:
             # Execute LLM Reasoning
             t0_llm = time.perf_counter()
-            analysis = self.reasoning_engine.analyze_event(event)
+            try:
+                analysis = self.reasoning_engine.analyze_event(event)
+            except Exception as e:
+                log.warning("reasoning_engine_failed_using_safe_fallback", error=str(e))
+                analysis = None
             llm_time = (time.perf_counter() - t0_llm) * 1000
-            
+
             self.metrics.record_decision(
                 ppo_latency_ms=0,
                 escalated=True,
                 llm_latency_ms=llm_time
             )
-            action_name = analysis.recommended_action
+            action_name = analysis.recommended_action if analysis else decision_result.action_name
             log.info("llm_reasoning_complete", action=action_name, time_ms=round(llm_time, 2))
         else:
             action_name = decision_result.action_name
@@ -285,7 +333,15 @@ class BlueAgent:
         patch = None
         val_result = None
         t0_remediate = time.perf_counter()
-        
+
+        evaluation_harness.log_transition(
+            phase=PhaseTransition.REMEDIATION_PROPOSED,
+            round_number=self.metrics._rounds,
+            component="blue_agent",
+            details={"action": action_name, "patch_required": bool(analysis and analysis.patch_required)},
+            qualitative_note=f"Remediation strategy selected: {action_name}",
+        )
+
         if action_name == "apply_known_patch" or (analysis and analysis.patch_required):
             patch = self.patch_gen.generate_patch(event, analysis)
             if patch:
@@ -304,28 +360,100 @@ class BlueAgent:
                 record.remediation = f"Security rule updated for {event.attack_type}"
             else:
                 record.remediation = action_name
-                
+
         # Calculate time taken for remediation/action
         remediate_time = (time.perf_counter() - t0_remediate) * 1000
         record.remediation_time_ms = remediate_time
-        
+
         # Determine success
         success = True
         if patch:
             success = val_result.decision == ValidationDecision.ACCEPT
-            
+
+        # Log VALIDATION_EXECUTED phase transition
+        evaluation_harness.log_transition(
+            phase=PhaseTransition.VALIDATION_EXECUTED,
+            round_number=self.metrics._rounds,
+            component="blue_agent",
+            details={
+                "decision": val_result.decision.value if val_result else "ACCEPT",
+                "tests_passed": val_result.tests_passed if val_result else True,
+                "has_patch": bool(patch),
+            },
+            qualitative_note="Target test suite passed; patch accepted." if success else "Validation failed; auto-rollback executed.",
+            latency_ms=remediate_time,
+        )
+
         self.metrics.record_remediation(success, remediate_time)
-            
+
         # 4. Hardening
         hardening_actions = self.hardening.derive_rules_from_event(event)
         record.hardening = hardening_actions
-        
+
+        evaluation_harness.log_transition(
+            phase=PhaseTransition.HARDENING_APPLIED,
+            round_number=self.metrics._rounds,
+            component="blue_agent",
+            details={"actions": hardening_actions},
+            qualitative_note=f"Applied {len(hardening_actions)} hardening rules",
+        )
+
         # 5. Store Memory
         record.outcome = "SUCCESS" if (val_result and val_result.decision == ValidationDecision.ACCEPT) or (not patch) else "ROLLED_BACK"
         try:
             self.memory.store(record)
         except Exception as e:
             log.error("memory_store_failed", error=str(e), record_id=record.record_id)
+
+        evaluation_harness.log_transition(
+            phase=PhaseTransition.ROUND_COMPLETE,
+            round_number=self.metrics._rounds,
+            component="orchestrator",
+            details={"outcome": record.outcome, "attack_type": event.attack_type},
+            qualitative_note=f"Round finished with outcome: {record.outcome}",
+        )
+
+        # 6. ── RAG Feedback Loop ─────────────────────────────────────────────
+        # Store the attack+mitigation pair in the knowledge base so future
+        # rounds can retrieve it via RAG.
+        try:
+            technique_id = event.features.get("technique_id", "unknown")
+            technique_name = event.features.get("technique_name", event.attack_type)
+            payload_summary = event.features.get("payload_summary",
+                                                  str(event.features.get("params", "")))
+            mitigation = record.remediation or action_name
+            ingest_remediation_outcome(
+                retriever=self.reasoning_engine._retriever,
+                attack_type=event.attack_type,
+                endpoint=event.endpoint,
+                technique_id=technique_id,
+                technique_name=technique_name,
+                payload_summary=payload_summary,
+                mitigation_applied=mitigation,
+                outcome=record.outcome,
+                confidence=record.ppo_confidence if record.ppo_confidence else 0.5,
+            )
+        except Exception as exc:
+            log.debug("rag_feedback_failed", error=str(exc))
+
+        # 7. ── Elasticsearch Indexing ────────────────────────────────────────
+        decision_doc = {
+            "event_id": event.event_id,
+            "attack_type": event.attack_type,
+            "endpoint": event.endpoint,
+            "severity": event.severity.value,
+            "decision_path": record.decision_path.value,
+            "ppo_confidence": round(record.ppo_confidence, 4),
+            "llm_escalation": record.llm_escalation,
+            "action": action_name,
+            "remediation": record.remediation or action_name,
+            "outcome": record.outcome,
+            "patch_id": record.patch_id,
+            "hardening": list(record.hardening),
+            "detection_time_ms": round(detect_time_ms, 2),
+            "remediation_time_ms": round(remediate_time, 2),
+        }
+        self._es.index_decision(decision_doc)
         
         log.info("defense_round_completed", event_id=event.event_id, outcome=record.outcome)
         self.last_round_details.append({

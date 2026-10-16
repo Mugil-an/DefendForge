@@ -1,0 +1,502 @@
+[
+  {
+    "technique_id": "T1190",
+    "name": "Exploit Public-Facing Application",
+    "tactic": "Initial Access",
+    "description": "Attack public-facing web applications for initial access or data exfiltration.",
+    "payload_categories": ["sql_injection"],
+    "severity": "critical",
+    "evasion_variants": [
+      "unicode_encode",
+      "comment_injection",
+      "double_url_encode",
+      "case_variation",
+      "whitespace_obfuscation"
+    ],
+    "detection_signatures": ["SQL keyword in params", "UNION SELECT pattern", "quote injection"],
+    "tags": ["web", "injection", "owasp-a03"]
+  },
+  {
+    "technique_id": "T1190.001",
+    "name": "SQL Injection — Time-Based Blind",
+    "tactic": "Initial Access",
+    "description": "Infer database contents via time delays (SLEEP/WAITFOR) rather than error messages.",
+    "payload_categories": ["sql_injection"],
+    "severity": "high",
+    "evasion_variants": [
+      "comment_injection",
+      "hex_encode",
+      "chunked_parameter"
+    ],
+    "detection_signatures": ["SLEEP(", "WAITFOR DELAY", "BENCHMARK("],
+    "tags": ["web", "blind-sqli", "owasp-a03"]
+  },
+  {
+    "technique_id": "T1190.002",
+    "name": "SQL Injection — Union-Based",
+    "tactic": "Initial Access",
+    "description": "Use UNION SELECT to append extra result sets and extract data from other tables.",
+    "payload_categories": ["sql_injection"],
+    "severity": "critical",
+    "evasion_variants": [
+      "comment_injection",
+      "case_variation",
+      "whitespace_obfuscation",
+      "unicode_encode"
+    ],
+    "detection_signatures": ["UNION SELECT", "UNION ALL SELECT", "information_schema"],
+    "tags": ["web", "union-sqli", "owasp-a03"]
+  },
+  {
+    "technique_id": "T1059",
+    "name": "Command and Scripting Interpreter",
+    "tactic": "Execution",
+    "description": "Execute system commands through vulnerable application parameters.",
+    "payload_categories": ["command_injection"],
+    "severity": "critical",
+    "evasion_variants": [
+      "command_separator_variation",
+      "shell_variable_insertion",
+      "backtick_substitution",
+      "hex_encode",
+      "double_url_encode"
+    ],
+    "detection_signatures": ["shell metachar", "semicolon separator", "pipe char"],
+    "tags": ["execution", "shell", "owasp-a03"]
+  },
+  {
+    "technique_id": "T1059.004",
+    "name": "Unix Shell Injection",
+    "tactic": "Execution",
+    "description": "Inject shell commands using Bash-specific features and metacharacters.",
+    "payload_categories": ["command_injection"],
+    "severity": "critical",
+    "evasion_variants": [
+      "dollar_brace_expansion",
+      "ifs_separation",
+      "base64_decode_exec",
+      "backtick_substitution"
+    ],
+    "detection_signatures": ["/bin/sh", "$(", "`cmd`"],
+    "tags": ["execution", "bash", "linux"]
+  },
+  {
+    "technique_id": "T1110",
+    "name": "Brute Force",
+    "tactic": "Credential Access",
+    "description": "Systematically guess credentials against authentication endpoints.",
+    "payload_categories": ["brute_force"],
+    "severity": "high",
+    "evasion_variants": [
+      "slow_timing",
+      "distributed_source",
+      "user_agent_rotation",
+      "session_rotation"
+    ],
+    "detection_signatures": ["repeated 401/403", "high-frequency POST to /login"],
+    "tags": ["credential", "authentication", "owasp-a07"]
+  },
+  {
+    "technique_id": "T1110.001",
+    "name": "Password Guessing — Common Passwords",
+    "tactic": "Credential Access",
+    "description": "Try common passwords (admin/admin, root/root, password123) against login forms.",
+    "payload_categories": ["brute_force"],
+    "severity": "medium",
+    "evasion_variants": [
+      "slow_timing",
+      "user_agent_rotation"
+    ],
+    "detection_signatures": ["common password patterns", "sequential login failures"],
+    "tags": ["credential", "weak-password"]
+  },
+  {
+    "technique_id": "T1110.003",
+    "name": "Password Spraying",
+    "tactic": "Credential Access",
+    "description": "Try one or a few passwords against many user accounts to avoid lockout thresholds.",
+    "payload_categories": ["brute_force"],
+    "severity": "high",
+    "evasion_variants": [
+      "slow_timing",
+      "distributed_source"
+    ],
+    "detection_signatures": ["many different usernames with same password", "slow rate spread across accounts"],
+    "tags": ["credential", "spray"]
+  },
+  {
+    "technique_id": "T1189",
+    "name": "Drive-by Compromise / XSS",
+    "tactic": "Initial Access",
+    "description": "Inject malicious scripts into web pages to execute in victims' browsers.",
+    "payload_categories": ["xss"],
+    "severity": "high",
+    "evasion_variants": [
+      "html_entity_encode",
+      "javascript_obfuscation",
+      "event_handler_variation",
+      "svg_payload",
+      "template_literal_injection"
+    ],
+    "detection_signatures": ["<script>", "onerror=", "onload=", "javascript:"],
+    "tags": ["web", "client-side", "owasp-a03"]
+  },
+  {
+    "technique_id": "T1189.001",
+    "name": "Stored XSS",
+    "tactic": "Initial Access",
+    "description": "Persist malicious script in database that executes when other users load the page.",
+    "payload_categories": ["xss"],
+    "severity": "critical",
+    "evasion_variants": [
+      "svg_payload",
+      "html_entity_encode",
+      "double_url_encode",
+      "template_literal_injection"
+    ],
+    "detection_signatures": ["persistent <script>", "stored event handler"],
+    "tags": ["web", "stored-xss", "persistent"]
+  },
+  {
+    "technique_id": "T1083",
+    "name": "File and Directory Discovery / Path Traversal",
+    "tactic": "Discovery",
+    "description": "Traverse outside the web root using ../ sequences to read sensitive system files.",
+    "payload_categories": ["path_traversal"],
+    "severity": "high",
+    "evasion_variants": [
+      "double_url_encode",
+      "null_byte_injection",
+      "unicode_slash",
+      "windows_backslash",
+      "overlong_utf8"
+    ],
+    "detection_signatures": ["../", "..\\", "/etc/passwd", "/etc/shadow"],
+    "tags": ["discovery", "file", "owasp-a01"]
+  },
+  {
+    "technique_id": "T1083.001",
+    "name": "Null Byte Path Traversal",
+    "tactic": "Discovery",
+    "description": "Inject null bytes (%00) to truncate file extensions and bypass server-side filters.",
+    "payload_categories": ["path_traversal"],
+    "severity": "high",
+    "evasion_variants": [
+      "null_byte_injection",
+      "double_url_encode"
+    ],
+    "detection_signatures": ["%00", "null byte in path"],
+    "tags": ["discovery", "file", "null-byte"]
+  },
+  {
+    "technique_id": "T1557",
+    "name": "Adversary-in-the-Middle / SSRF",
+    "tactic": "Collection",
+    "description": "Trick the server into making requests to internal services via SSRF.",
+    "payload_categories": ["ssrf"],
+    "severity": "critical",
+    "evasion_variants": [
+      "dns_rebinding",
+      "redirect_chain",
+      "decimal_ip",
+      "octal_ip",
+      "ipv6_loopback"
+    ],
+    "detection_signatures": ["internal IP in URL param", "169.254.", "metadata.internal"],
+    "tags": ["network", "ssrf", "owasp-a10"]
+  },
+  {
+    "technique_id": "T1557.001",
+    "name": "SSRF to Cloud Metadata",
+    "tactic": "Collection",
+    "description": "Use SSRF to reach cloud provider metadata endpoints (AWS/GCP/Azure) for credentials.",
+    "payload_categories": ["ssrf"],
+    "severity": "critical",
+    "evasion_variants": [
+      "decimal_ip",
+      "redirect_chain",
+      "ipv6_loopback"
+    ],
+    "detection_signatures": ["169.254.169.254", "metadata.google.internal"],
+    "tags": ["network", "cloud", "ssrf"]
+  },
+  {
+    "technique_id": "T1595",
+    "name": "Active Scanning / Reconnaissance",
+    "tactic": "Reconnaissance",
+    "description": "Probe application for exposed endpoints, admin panels, config files, and backups.",
+    "payload_categories": ["reconnaissance"],
+    "severity": "low",
+    "evasion_variants": [
+      "slow_timing",
+      "user_agent_rotation",
+      "random_order"
+    ],
+    "detection_signatures": ["high-frequency GETs", "scan patterns", "404 flood"],
+    "tags": ["recon", "discovery", "scanning"]
+  },
+  {
+    "technique_id": "T1595.002",
+    "name": "Vulnerability Scanning",
+    "tactic": "Reconnaissance",
+    "description": "Use known scanning signatures to detect version-specific vulnerabilities.",
+    "payload_categories": ["reconnaissance"],
+    "severity": "medium",
+    "evasion_variants": [
+      "user_agent_rotation",
+      "slow_timing"
+    ],
+    "detection_signatures": ["scanner user-agent", "version probe patterns"],
+    "tags": ["recon", "scanning", "version-detect"]
+  },
+  {
+    "technique_id": "T1552",
+    "name": "Unsecured Credentials",
+    "tactic": "Credential Access",
+    "description": "Look for hardcoded credentials or exposed .env files, git repos, backups.",
+    "payload_categories": ["reconnaissance"],
+    "severity": "high",
+    "evasion_variants": [
+      "slow_timing",
+      "random_order"
+    ],
+    "detection_signatures": [".env access", "/.git/ access", "config file probe"],
+    "tags": ["credential", "exposure", "discovery"]
+  },
+  {
+    "technique_id": "T1078",
+    "name": "Valid Accounts — Default Credentials",
+    "tactic": "Persistence",
+    "description": "Use default or well-known credentials to access admin interfaces.",
+    "payload_categories": ["brute_force"],
+    "severity": "high",
+    "evasion_variants": [
+      "slow_timing",
+      "user_agent_rotation"
+    ],
+    "detection_signatures": ["admin:admin", "root:root", "default credential patterns"],
+    "tags": ["credential", "default", "persistence"]
+  },
+  {
+    "technique_id": "T1134",
+    "name": "Access Token Manipulation",
+    "tactic": "Privilege Escalation",
+    "description": "Forge or manipulate JWT tokens to escalate privileges.",
+    "payload_categories": ["sql_injection"],
+    "severity": "critical",
+    "evasion_variants": [
+      "alg_none_attack",
+      "key_confusion",
+      "header_injection"
+    ],
+    "detection_signatures": ["alg:none JWT", "modified token signature"],
+    "tags": ["privilege-escalation", "jwt", "auth"]
+  },
+  {
+    "technique_id": "T1499",
+    "name": "Endpoint Denial of Service",
+    "tactic": "Impact",
+    "description": "Flood the application with requests to exhaust resources.",
+    "payload_categories": ["brute_force"],
+    "severity": "high",
+    "evasion_variants": [
+      "slow_loris",
+      "large_payload",
+      "connection_exhaustion"
+    ],
+    "detection_signatures": ["high request rate", "connection flood", "timeout storms"],
+    "tags": ["dos", "availability", "flood"]
+  },
+  {
+    "technique_id": "T1027",
+    "name": "Obfuscated Files or Information",
+    "tactic": "Defense Evasion",
+    "description": "Encode or obfuscate attack payloads to evade signature-based detection.",
+    "payload_categories": ["xss", "sql_injection", "command_injection"],
+    "severity": "medium",
+    "evasion_variants": [
+      "double_url_encode",
+      "hex_encode",
+      "base64_decode_exec",
+      "unicode_encode"
+    ],
+    "detection_signatures": ["multi-layer encoding", "unusual character density"],
+    "tags": ["evasion", "encoding", "obfuscation"]
+  },
+  {
+    "technique_id": "T1071",
+    "name": "Application Layer Protocol Abuse",
+    "tactic": "Command and Control",
+    "description": "Use HTTP headers and unusual request patterns to exfiltrate data or C2.",
+    "payload_categories": ["ssrf"],
+    "severity": "medium",
+    "evasion_variants": [
+      "header_injection",
+      "http_verb_tampering",
+      "chunked_encoding"
+    ],
+    "detection_signatures": ["unusual headers", "non-standard HTTP verbs"],
+    "tags": ["exfiltration", "http", "protocol-abuse"]
+  },
+  {
+    "technique_id": "T1185",
+    "name": "Browser Session Hijacking / Cookie Theft",
+    "tactic": "Collection",
+    "description": "Steal session cookies via XSS or insecure cookie configuration.",
+    "payload_categories": ["xss"],
+    "severity": "high",
+    "evasion_variants": [
+      "javascript_obfuscation",
+      "svg_payload",
+      "event_handler_variation"
+    ],
+    "detection_signatures": ["document.cookie exfil", "XHR to external host from JS"],
+    "tags": ["session", "cookie", "theft"]
+  },
+  {
+    "technique_id": "T1203",
+    "name": "Exploitation for Client Execution",
+    "tactic": "Execution",
+    "description": "Deliver malicious content that causes vulnerable client-side processing.",
+    "payload_categories": ["xss"],
+    "severity": "high",
+    "evasion_variants": [
+      "svg_payload",
+      "template_literal_injection",
+      "html_entity_encode"
+    ],
+    "detection_signatures": ["malicious file upload", "SVG with JS", "HTML injection"],
+    "tags": ["client-side", "execution", "file-upload"]
+  },
+  {
+    "technique_id": "T1562",
+    "name": "Impair Defenses",
+    "tactic": "Defense Evasion",
+    "description": "Attempt to disable WAF rules or overload detection through noise generation.",
+    "payload_categories": ["reconnaissance"],
+    "severity": "medium",
+    "evasion_variants": [
+      "noise_injection",
+      "slow_timing",
+      "parameter_pollution"
+    ],
+    "detection_signatures": ["anomaly in defense triggers", "rule disablement attempt"],
+    "tags": ["evasion", "anti-defense", "bypass"]
+  },
+  {
+    "technique_id": "T1036",
+    "name": "Masquerading",
+    "tactic": "Defense Evasion",
+    "description": "Disguise attack traffic as legitimate user behavior.",
+    "payload_categories": ["sql_injection", "xss", "command_injection"],
+    "severity": "medium",
+    "evasion_variants": [
+      "user_agent_rotation",
+      "legitimate_referer",
+      "slow_timing"
+    ],
+    "detection_signatures": ["suspicious user-agent", "malformed referer"],
+    "tags": ["evasion", "masquerade", "blending"]
+  },
+  {
+    "technique_id": "T1213",
+    "name": "Data from Information Repositories",
+    "tactic": "Collection",
+    "description": "Extract data from application databases via injection or authorization flaws.",
+    "payload_categories": ["sql_injection"],
+    "severity": "critical",
+    "evasion_variants": [
+      "comment_injection",
+      "hex_encode",
+      "case_variation"
+    ],
+    "detection_signatures": ["data dump patterns", "bulk SELECT", "schema enumeration"],
+    "tags": ["collection", "data-theft", "database"]
+  },
+  {
+    "technique_id": "T1530",
+    "name": "Data from Cloud Storage",
+    "tactic": "Collection",
+    "description": "Access publicly exposed cloud storage objects (S3, Minio) via SSRF or misconfiguration.",
+    "payload_categories": ["ssrf"],
+    "severity": "high",
+    "evasion_variants": [
+      "redirect_chain",
+      "decimal_ip"
+    ],
+    "detection_signatures": ["cloud storage endpoint access", "S3-style paths in requests"],
+    "tags": ["cloud", "data-theft", "ssrf"]
+  },
+  {
+    "technique_id": "T1190.003",
+    "name": "NoSQL Injection",
+    "tactic": "Initial Access",
+    "description": "Manipulate NoSQL queries using JSON-based operator injection.",
+    "payload_categories": ["sql_injection"],
+    "severity": "high",
+    "evasion_variants": [
+      "json_injection",
+      "operator_injection"
+    ],
+    "detection_signatures": ["$where", "$ne", "$regex in params", "MongoDB operator"],
+    "tags": ["nosql", "injection", "owasp-a03"]
+  },
+  {
+    "technique_id": "T1059.007",
+    "name": "JavaScript / Template Injection",
+    "tactic": "Execution",
+    "description": "Inject code into server-side template engines (Jinja2, Twig, Freemarker).",
+    "payload_categories": ["xss", "command_injection"],
+    "severity": "critical",
+    "evasion_variants": [
+      "template_literal_injection",
+      "unicode_encode",
+      "double_url_encode"
+    ],
+    "detection_signatures": ["{{7*7}}", "${7*7}", "#{7*7}", "template eval markers"],
+    "tags": ["ssti", "template", "server-side"]
+  },
+  {
+    "technique_id": "T1548",
+    "name": "Abuse Elevation Control Mechanism",
+    "tactic": "Privilege Escalation",
+    "description": "Exploit missing authorization checks to access admin-only endpoints.",
+    "payload_categories": ["reconnaissance"],
+    "severity": "high",
+    "evasion_variants": [
+      "header_injection",
+      "http_verb_tampering",
+      "parameter_pollution"
+    ],
+    "detection_signatures": ["/admin/ without auth", "privilege check bypass", "X-Original-URL"],
+    "tags": ["privilege-escalation", "authorization", "access-control"]
+  },
+  {
+    "technique_id": "T1566",
+    "name": "Phishing / HTTP Header Injection",
+    "tactic": "Initial Access",
+    "description": "Inject malicious HTTP headers (Host, X-Forwarded-For) to manipulate server logic.",
+    "payload_categories": ["sql_injection"],
+    "severity": "medium",
+    "evasion_variants": [
+      "header_injection",
+      "http_verb_tampering"
+    ],
+    "detection_signatures": ["non-standard X- headers", "host header mismatch"],
+    "tags": ["header", "injection", "protocol"]
+  },
+  {
+    "technique_id": "T1040",
+    "name": "Network Sniffing / Information Leakage",
+    "tactic": "Credential Access",
+    "description": "Probe error messages and verbose responses to extract implementation details.",
+    "payload_categories": ["reconnaissance"],
+    "severity": "low",
+    "evasion_variants": [
+      "slow_timing",
+      "random_order"
+    ],
+    "detection_signatures": ["stack trace in response", "verbose error messages", "debug=True"],
+    "tags": ["information-leakage", "error", "reconnaissance"]
+  }
+]

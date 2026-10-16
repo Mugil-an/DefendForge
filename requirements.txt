@@ -31,6 +31,10 @@ openai>=1.30
 sentence-transformers>=3.0
 faiss-cpu>=1.8
 tiktoken>=0.7
+# Gemini 1.5 Pro support (primary LLM)
+google-generativeai>=0.7
+# Elasticsearch client (for Kibana event indexing)
+elasticsearch>=8.0,<9.0
 
 # ---- Security scanners -------------------------------------------
 # semgrep and bandit are CLI tools; install separately or via pip:

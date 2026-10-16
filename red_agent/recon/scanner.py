@@ -47,6 +47,7 @@ class EndpointInfo:
     accepts_params: bool = False
     requires_auth: bool = False
     has_form: bool = False
+    parameters: list[str] = field(default_factory=list)
     technologies: list[str] = field(default_factory=list)
 
 
@@ -102,13 +103,10 @@ class LiveScanner:
     Safety: Only targets allowlisted hosts (localhost, target_app, etc.).
     """
 
-    ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1", "target_app", "target-app"}
-
     def __init__(self, target_url: str, *, timeout: float = 5.0):
-        from urllib.parse import urlparse
-        parsed = urlparse(target_url)
-        if parsed.hostname not in self.ALLOWED_HOSTS:
-            raise ValueError(f"Reconnaissance restricted to local targets, got: {parsed.hostname}")
+        from red_agent.guardrails import TargetGuard
+        guard = TargetGuard()
+        guard.validate(target_url)
         self.target_url = target_url.rstrip("/")
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout, follow_redirects=True)
@@ -161,10 +159,14 @@ class LiveScanner:
                         headers=dict(resp.headers),
                         requires_auth=resp.status_code == 401,
                     )
-                    # Check if response contains HTML forms
-                    body = resp.text[:4096]
+                    # Check if response contains HTML forms and extract input names
+                    body = resp.text[:16384]
                     if "<form" in body.lower():
                         ep.has_form = True
+                        input_names = re.findall(r'<(?:input|textarea|select)[^>]+name=["\']([^"\']+)["\']', body, re.IGNORECASE)
+                        ep.parameters = list(dict.fromkeys(input_names))
+                        if ep.parameters:
+                            ep.accepts_params = True
                     if resp.status_code != 404:
                         report.discovered_endpoints.append(ep)
             except httpx.HTTPError:
@@ -217,8 +219,11 @@ class LiveScanner:
     def _map_vulnerabilities(self, report: ReconReport) -> None:
         """Identify potential vulnerability surfaces from discovered endpoints."""
         for ep in report.discovered_endpoints:
-            # SQL injection surfaces — endpoints with query params or forms
-            if ep.has_form and ep.path in ("/login", "/search", "/comments"):
+            path_lower = ep.path.lower()
+
+            # SQL injection surfaces: forms, query params, or matching path keywords
+            sqli_keywords = ("login", "search", "query", "comment", "user", "item", "order", "account", "db", "auth")
+            if ep.has_form or ep.parameters or any(k in path_lower for k in sqli_keywords):
                 report.potential_vulnerabilities.append({
                     "type": "SQL Injection Surface",
                     "endpoint": ep.path,
@@ -226,11 +231,12 @@ class LiveScanner:
                     "severity": "high",
                     "cwe": "CWE-89",
                     "mitre": "T1190",
-                    "detail": f"Form-based input on {ep.path} may be vulnerable to SQL injection",
+                    "detail": f"Input on {ep.path} (params: {ep.parameters or 'query'}) may be vulnerable to SQL injection",
                 })
 
-            # XSS surfaces — endpoints that reflect input
-            if ep.path in ("/greet",):
+            # XSS surfaces: endpoints reflecting text or containing render keywords
+            xss_keywords = ("greet", "render", "view", "echo", "message", "profile", "comment", "feedback", "search")
+            if any(k in path_lower for k in xss_keywords) or (ep.content_type and "html" in ep.content_type.lower() and ep.parameters):
                 report.potential_vulnerabilities.append({
                     "type": "Reflected XSS Surface",
                     "endpoint": ep.path,
@@ -242,7 +248,8 @@ class LiveScanner:
                 })
 
             # Command injection — system command endpoints
-            if ep.path in ("/ping",):
+            cmd_keywords = ("ping", "exec", "cmd", "run", "diag", "host", "check", "shell", "tools")
+            if any(k in path_lower for k in cmd_keywords):
                 report.potential_vulnerabilities.append({
                     "type": "Command Injection Surface",
                     "endpoint": ep.path,
@@ -250,11 +257,12 @@ class LiveScanner:
                     "severity": "critical",
                     "cwe": "CWE-78",
                     "mitre": "T1059",
-                    "detail": f"System command execution via {ep.path}",
+                    "detail": f"System command execution surface on {ep.path}",
                 })
 
             # Path traversal — file access endpoints
-            if ep.path in ("/file",):
+            file_keywords = ("file", "download", "doc", "read", "view", "asset", "get", "image", "upload")
+            if any(k in path_lower for k in file_keywords):
                 report.potential_vulnerabilities.append({
                     "type": "Path Traversal Surface",
                     "endpoint": ep.path,
@@ -266,7 +274,8 @@ class LiveScanner:
                 })
 
             # SSRF surfaces
-            if ep.path in ("/fetch",):
+            ssrf_keywords = ("fetch", "proxy", "url", "webhook", "curl", "request", "remote", "load")
+            if any(k in path_lower for k in ssrf_keywords):
                 report.potential_vulnerabilities.append({
                     "type": "SSRF Surface",
                     "endpoint": ep.path,
@@ -278,7 +287,8 @@ class LiveScanner:
                 })
 
             # Insecure deserialization
-            if ep.path in ("/load",):
+            deserial_keywords = ("load", "deserialize", "object", "pickle", "bin", "state")
+            if any(k in path_lower for k in deserial_keywords):
                 report.potential_vulnerabilities.append({
                     "type": "Insecure Deserialization Surface",
                     "endpoint": ep.path,
@@ -290,7 +300,7 @@ class LiveScanner:
                 })
 
             # Broken access control
-            if ep.path.startswith("/admin") and not ep.requires_auth:
+            if any(k in path_lower for k in ("admin", "manage", "internal", "config", "debug")) and not ep.requires_auth:
                 report.potential_vulnerabilities.append({
                     "type": "Broken Access Control",
                     "endpoint": ep.path,
@@ -298,7 +308,7 @@ class LiveScanner:
                     "severity": "high",
                     "cwe": "CWE-284",
                     "mitre": "T1078",
-                    "detail": f"Admin endpoint {ep.path} accessible without authentication",
+                    "detail": f"Sensitive endpoint {ep.path} accessible without authentication",
                 })
 
         # Active probing for specific vulns

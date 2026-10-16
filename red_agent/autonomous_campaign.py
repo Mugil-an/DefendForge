@@ -3,11 +3,11 @@ Red Agent — Autonomous Multi-Round Campaign.
 
 This is the core autonomous attack loop that:
 1. Performs real reconnaissance against the target
-2. Uses LLM reasoning (via Ollama/OpenAI) to decide attack strategy
+2. Selects attack techniques from the MITRE ATT&CK knowledge base
 3. Executes attacks using the payload library
-4. Records results in adaptive memory
-5. Adapts strategy based on what was detected/blocked
-6. Runs multiple rounds, evolving against Blue Agent defenses
+4. Records results in adaptive in-round and persistent cross-campaign memory
+5. Applies evasion variants for previously blocked techniques
+6. Adapts strategy based on what was detected/blocked across rounds & campaigns
 """
 from __future__ import annotations
 
@@ -21,11 +21,14 @@ import httpx
 
 from blue_agent.logging_cfg import get_logger
 from red_agent.config import red_settings
+from red_agent.evasion import EvasionEngine
 from red_agent.guardrails import TargetGuard
 from red_agent.knowledge import AttackKnowledge
 from red_agent.memory import AttackRecord, RedMemory, RoundSummary
+from red_agent.mitre_knowledge import MitreKnowledge
 from red_agent.models import CampaignState
 from red_agent.payloads import get_payloads, get_all_categories
+from red_agent.persistent_memory import RedPersistentMemory
 from red_agent.planner import TargetAwarePlanner
 from red_agent.provenance import signed_provenance_headers
 from target_platform.registry import Endpoint, RegisteredTarget, TargetRegistry
@@ -92,6 +95,11 @@ class AutonomousCampaign:
         self._llm_available = False
         self._discovered_endpoints: tuple[Endpoint, ...] = ()
 
+        # ── MITRE + Evasion + Persistent memory ──────────────────────
+        self.mitre = MitreKnowledge()
+        self.evasion = EvasionEngine()
+        self.persistent_memory = RedPersistentMemory()
+
     def run(self) -> AutonomousCampaignResult:
         """Execute the full autonomous campaign."""
         result = AutonomousCampaignResult()
@@ -116,8 +124,12 @@ class AutonomousCampaign:
         log.info("autonomous_campaign_llm_status", available=self._llm_available)
 
         # Phase 2: Multi-round attack loop
+        self._stop_requested = False
         with httpx.Client(base_url=self.target_url, timeout=self.timeout) as client:
             for round_num in range(1, self.max_rounds + 1):
+                if getattr(self, "_stop_requested", False):
+                    log.info("autonomous_campaign_stopped_by_user", round=round_num)
+                    break
                 log.info("autonomous_campaign_round_start", round=round_num)
                 self.memory.start_new_round()
 
@@ -269,7 +281,7 @@ class AutonomousCampaign:
             return []
 
     def _plan_heuristic(self, round_num: int) -> list[dict[str, Any]]:
-        """Heuristic attack planning without LLM."""
+        """MITRE-guided attack planning — uses knowledge base + persistent memory."""
         plan = []
 
         # Prefer target registry discovery and audit evidence over the legacy
@@ -279,35 +291,114 @@ class AutonomousCampaign:
                 self.target, max_events=self.max_events_per_round
             ).plan(self._discovered_endpoints, self.audit_findings)
             if target_plan:
-                return target_plan
+                # Annotate with MITRE data before returning
+                return self._annotate_with_mitre(target_plan)
 
-        # Use memory to pick best attack types
-        best_types = self.memory.get_best_attack_types(3)
+        # ── MITRE-driven selection ────────────────────────────────────
+        blocked_ids = self.persistent_memory.get_blocked_technique_ids()
+        tried_ids = self.persistent_memory.get_tried_technique_ids(self.campaign_id)
 
-        # On first round, try a broader scan
-        if round_num == 1:
-            best_types = get_all_categories()
+        # Pick a diverse set of MITRE techniques
+        selected_techniques = []
+        for _ in range(min(3, self.max_events_per_round)):
+            least_covered_tactic = self.mitre.get_least_covered_tactic(tried_ids)
+            tech = self.mitre.get_novel_technique(
+                blocked_ids=blocked_ids,
+                tried_ids={t.technique_id for t in selected_techniques} | tried_ids,
+                preferred_tactic=least_covered_tactic,
+            )
+            if tech and tech not in selected_techniques:
+                selected_techniques.append(tech)
 
-        for attack_type in best_types:
-            # Skip if endpoint is known to be patched
+        if not selected_techniques:
+            # Fallback: use in-round memory
+            best_types = self.memory.get_best_attack_types(3)
+            if round_num == 1:
+                best_types = get_all_categories()
+            for attack_type in best_types:
+                endpoints = self._get_endpoints_for_attack(attack_type)
+                for ep in endpoints:
+                    if not self.memory.is_endpoint_patched(ep["endpoint"], attack_type):
+                        plan.append({
+                            "type": attack_type,
+                            "endpoint": ep["endpoint"],
+                            "method": ep.get("method", "GET"),
+                            "reasoning": f"Fallback heuristic: {attack_type} on {ep['endpoint']}",
+                            "technique_id": "unknown",
+                            "technique_name": attack_type,
+                            "evasion_variant": "none",
+                        })
+                if len(plan) >= self.max_events_per_round:
+                    break
+            return plan[:self.max_events_per_round]
+
+        # Build plan from selected MITRE techniques
+        for tech in selected_techniques:
+            if not tech.payload_categories:
+                continue
+            attack_type = tech.payload_categories[0]
             endpoints = self._get_endpoints_for_attack(attack_type)
-            for ep in endpoints:
+
+            # Determine if evasion is needed
+            already_tried_variants = self.persistent_memory.get_tried_evasion_variants(
+                tech.technique_id
+            )
+            was_blocked_before = tech.technique_id in blocked_ids
+            evasion_variant = "none"
+            if was_blocked_before and tech.evasion_variants:
+                evasion_variant = self.mitre.get_evasion_variant(
+                    tech.technique_id, already_tried_variants
+                ) or "none"
+
+            for ep in endpoints[:max(1, self.max_events_per_round // len(selected_techniques))]:
                 if self.memory.is_endpoint_patched(ep["endpoint"], attack_type):
-                    log.info("skipping_patched_endpoint",
-                             endpoint=ep["endpoint"],
-                             attack_type=attack_type)
                     continue
                 plan.append({
                     "type": attack_type,
                     "endpoint": ep["endpoint"],
                     "method": ep.get("method", "GET"),
-                    "reasoning": f"Heuristic: {attack_type} on {ep['endpoint']}",
+                    "reasoning": (
+                        f"MITRE {tech.technique_id} {tech.name} "
+                        f"({'evasion:' + evasion_variant if was_blocked_before else 'novel'})"
+                    ),
+                    "technique_id": tech.technique_id,
+                    "technique_name": tech.name,
+                    "tactic": tech.tactic,
+                    "evasion_variant": evasion_variant,
                 })
 
-            if len(plan) >= self.max_events_per_round:
-                break
-
         return plan[:self.max_events_per_round]
+
+    def _annotate_with_mitre(self, plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Annotate a plan from TargetAwarePlanner with MITRE technique metadata."""
+        blocked_ids = self.persistent_memory.get_blocked_technique_ids()
+        for item in plan:
+            attack_type = item.get("type", "")
+            techniques = self.mitre.get_by_payload_category(attack_type)
+            if techniques:
+                # Pick the best unblocked technique
+                tech = next(
+                    (t for t in techniques if t.technique_id not in blocked_ids),
+                    techniques[0]
+                )
+                item.setdefault("technique_id", tech.technique_id)
+                item.setdefault("technique_name", tech.name)
+                item.setdefault("tactic", tech.tactic)
+                # Add evasion if this technique was blocked before
+                if tech.technique_id in blocked_ids:
+                    tried = self.persistent_memory.get_tried_evasion_variants(tech.technique_id)
+                    item.setdefault(
+                        "evasion_variant",
+                        self.mitre.get_evasion_variant(tech.technique_id, tried) or "none"
+                    )
+                else:
+                    item.setdefault("evasion_variant", "none")
+            else:
+                item.setdefault("technique_id", "unknown")
+                item.setdefault("technique_name", attack_type)
+                item.setdefault("tactic", "unknown")
+                item.setdefault("evasion_variant", "none")
+        return plan
 
     def _get_endpoints_for_attack(self, attack_type: str) -> list[dict[str, str]]:
         """Map attack type to target endpoints using recon data."""
@@ -370,7 +461,7 @@ class AutonomousCampaign:
         round_num: int,
         attack_plan: list[dict[str, Any]],
     ) -> tuple[list[dict], list[dict], list[AttackRecord]]:
-        """Execute all attacks in a round."""
+        """Execute all attacks in a round, applying evasion where needed."""
         traffic = []
         truth = []
         records = []
@@ -379,6 +470,10 @@ class AutonomousCampaign:
             attack_type = plan_item["type"]
             endpoint = plan_item["endpoint"]
             method = plan_item.get("method", "GET")
+            technique_id = plan_item.get("technique_id", "unknown")
+            technique_name = plan_item.get("technique_name", attack_type)
+            tactic = plan_item.get("tactic", "unknown")
+            evasion_variant = plan_item.get("evasion_variant", "none")
 
             payloads = get_payloads(attack_type)
             if not payloads:
@@ -387,17 +482,31 @@ class AutonomousCampaign:
             # Pick payload based on round (cycle through them)
             payload_idx = (round_num - 1 + len(traffic)) % len(payloads)
             payload = payloads[payload_idx]
+            raw_payload_value = payload.payload
 
-            # Build and send the request
-            params = {payload.param_name: payload.payload} if payload.param_name else {}
+            # ── Apply evasion transform if requested ──────────────────
+            mutated_value = raw_payload_value
+            if evasion_variant and evasion_variant != "none":
+                mutated_value = self.evasion.apply(evasion_variant, raw_payload_value)
+                log.info("evasion_transform_applied",
+                         technique=technique_id,
+                         variant=evasion_variant,
+                         endpoint=endpoint)
+
+            # Build request params
+            params = {payload.param_name: mutated_value} if payload.param_name else {}
             request_id = f"{self.campaign_id}-{round_num}-{len(traffic)}"
             provenance = signed_provenance_headers(self.campaign_id, request_id)
 
+            # Apply meta-level evasion headers
+            extra_headers = self.evasion.meta_headers(evasion_variant)
+            all_headers = {**provenance, **extra_headers}
+
             try:
                 if method.upper() == "POST":
-                    response = client.post(endpoint, data=params, headers=provenance)
+                    response = client.post(endpoint, data=params, headers=all_headers)
                 else:
-                    response = client.get(endpoint, params=params, headers=provenance)
+                    response = client.get(endpoint, params=params, headers=all_headers)
 
                 response_code = response.status_code
                 response_size = len(response.content)
@@ -411,6 +520,8 @@ class AutonomousCampaign:
             exploit_success = self._evaluate_exploit_success(
                 attack_type, endpoint, response_code, response_body
             )
+            was_blocked = response_code in (403, 429)
+            was_detected = response_code in (403, 429, 200)  # conservative assumption
 
             # Build traffic event
             event = {
@@ -421,11 +532,14 @@ class AutonomousCampaign:
                 "response_code": response_code,
                 "response_time_ms": 0,
                 "body_size": response_size,
-                "user_agent": "DefendForge-RedAgent/2.0-Autonomous",
+                "user_agent": all_headers.get("User-Agent",
+                                              "DefendForge-RedAgent/2.0-Autonomous"),
                 "destination": "target_app",
                 "request_id": request_id,
                 "campaign_id": self.campaign_id,
                 "source_kind": "red",
+                "technique_id": technique_id,
+                "evasion_variant": evasion_variant,
             }
 
             truth_item = {
@@ -437,12 +551,14 @@ class AutonomousCampaign:
                 "response_code": response_code,
                 "exploit_success": exploit_success,
                 "round": round_num,
+                "technique_id": technique_id,
+                "evasion_variant": evasion_variant,
             }
 
             traffic.append(event)
             truth.append(truth_item)
 
-            # Record in memory
+            # ── Record in in-round memory ─────────────────────────────
             record = AttackRecord(
                 round_number=round_num,
                 attack_type=attack_type,
@@ -450,13 +566,35 @@ class AutonomousCampaign:
                 method=method,
                 payload_summary=payload.description,
                 response_code=response_code,
-                detected=True,  # Assume detected initially; Blue Agent will update
+                detected=was_detected,
                 success=exploit_success,
-                blocked=response_code in (403, 429),
+                blocked=was_blocked,
                 notes=plan_item.get("reasoning", ""),
             )
             self.memory.record_attack(record)
             records.append(record)
+
+            # ── Record in cross-campaign persistent memory ────────────
+            try:
+                self.persistent_memory.record_attack(
+                    campaign_id=self.campaign_id,
+                    round_number=round_num,
+                    technique_id=technique_id,
+                    technique_name=technique_name,
+                    tactic=tactic,
+                    attack_type=attack_type,
+                    endpoint=endpoint,
+                    method=method,
+                    payload_value=mutated_value,
+                    evasion_variant=evasion_variant,
+                    response_code=response_code,
+                    was_blocked=was_blocked,
+                    was_detected=was_detected,
+                    exploit_success=exploit_success,
+                    notes=plan_item.get("reasoning", ""),
+                )
+            except Exception as exc:
+                log.warning("persistent_memory_record_failed", error=str(exc))
 
         return traffic, truth, records
 

@@ -25,7 +25,7 @@ from blue_agent.schemas import AnomalyResult
 log = get_logger("detection.cicids_flow")
 
 # Default path to the existing trained model
-_DEFAULT_MODEL_PATH = Path(settings.detection.model_path) if "random_forest" in settings.detection.model_path else PROJECT_ROOT / "blue_agent" / "anomaly_detector" / "models" / "cicids_random_forest.joblib"
+_DEFAULT_MODEL_PATH = PROJECT_ROOT / "blue_agent" / "anomaly_detector" / "models" / "cicids_random_forest.joblib"
 
 
 class CICIDSFlowDetector(AnomalyDetectorBase):
@@ -116,6 +116,8 @@ class CICIDSFlowDetector(AnomalyDetectorBase):
             if self._feature_names:
                 X = X.reindex(columns=self._feature_names)
             X = X.values
+
+        results: List[AnomalyResult] = []
 
         # Check if model provides score_samples (like IsolationForest) or predict_proba (like RandomForest)
         if hasattr(self._pipeline, "score_samples"):

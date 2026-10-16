@@ -7,6 +7,86 @@
     {
       "pattern": "(?i)(<script>|javascript:)",
       "attack_type": "Cross-Site Scripting"
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.213",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.46",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.182",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.237",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.21",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.28",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.4",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.231",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:10.0.0.66",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.77",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.120",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.202",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.162",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.179",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.92",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.119",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.48",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.233",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.148",
+      "attack_type": "Rate limit for "
+    },
+    {
+      "pattern": "(?i)rate_limit:192.168.1.118",
+      "attack_type": "Rate limit for "
     }
   ]
 }
