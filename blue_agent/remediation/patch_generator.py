@@ -37,9 +37,12 @@ class PatchGenerator:
 
     def _locate_vulnerable_file(self, endpoint: str, component: str = "") -> tuple[Optional[Path], str]:
         """Dynamically locate the source code file handling this endpoint or component."""
-        target_root = Path(settings.audit.target_app_path or (PROJECT_ROOT / "target_app"))
-        if not target_root.exists() or not target_root.is_dir():
-            target_root = Path("/target") if os.path.exists("/target") else (PROJECT_ROOT / "target_app")
+        if os.path.exists("/target") and os.path.isdir("/target"):
+            target_root = Path("/target")
+        elif settings.audit.target_app_path and Path(settings.audit.target_app_path).is_dir():
+            target_root = Path(settings.audit.target_app_path)
+        else:
+            target_root = PROJECT_ROOT / "target_app"
 
         # Check if component points to an existing file
         if component:

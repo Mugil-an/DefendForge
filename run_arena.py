@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -189,32 +190,89 @@ def run_standalone_arena(target_url: str, target_path: str, rounds: int, events_
     print(f"{'='*70}\n")
 
 
+
+TARGET_PRESETS = {
+    "juice-shop": {
+        "name": "OWASP Juice Shop",
+        "url": "http://localhost:3000",
+        "path": str(WORKSPACE_ROOT.parent / "juice-shop"),
+    },
+    "pygoat": {
+        "name": "PyGoat",
+        "url": "http://localhost:8000",
+        "path": str(WORKSPACE_ROOT.parent / "pygoat"),
+    },
+    "gitea": {
+        "name": "Gitea",
+        "url": "http://localhost:3000",
+        "path": str(WORKSPACE_ROOT.parent / "gitea"),
+    },
+    "flaskbb": {
+        "name": "FlaskBB",
+        "url": "http://localhost:5000",
+        "path": str(WORKSPACE_ROOT.parent / "flaskbb"),
+    },
+    "default": {
+        "name": "Bundled Target App",
+        "url": "http://localhost:5000",
+        "path": str(WORKSPACE_ROOT / "target_app"),
+    },
+}
+
 def main() -> None:
     print(BANNER)
     parser = argparse.ArgumentParser(description="DefendForge Attack & Defense Arena CLI")
+    parser.add_argument("--target", choices=list(TARGET_PRESETS.keys()), default="", help="Preconfigured target app (juice-shop, pygoat, gitea, flaskbb, default)")
     parser.add_argument("--target-url", default="", help="Target Docker container URL (e.g. http://target_gateway:8080)")
     parser.add_argument("--target-path", default="", help="Path to target app source code for patching (e.g. ./target_app)")
     parser.add_argument("--rounds", type=int, default=0, help="Number of campaign rounds (e.g. 5)")
     parser.add_argument("--events-per-round", type=int, default=10, help="Max attacks per round")
-    parser.add_argument("--api-url", default="http://localhost:8000", help="DefendForge API URL")
+    default_api_url = os.getenv("DEFENDFORGE_API_URL", f"http://localhost:{os.getenv('BLUE_AGENT_PORT', '8000')}")
+    parser.add_argument("--api-url", default=default_api_url, help="DefendForge API URL")
     args = parser.parse_args()
 
-    # Interactive prompts if arguments not supplied
     target_url = args.target_url
+    target_path = args.target_path
+
+    if args.target and args.target in TARGET_PRESETS:
+        preset = TARGET_PRESETS[args.target]
+        if not target_url:
+            target_url = preset["url"]
+        if not target_path:
+            target_path = preset["path"]
+        print(f"[+] Loaded preset: {preset['name']} ({target_url})")
+
+    # Interactive prompts if arguments not supplied
     if not target_url:
         if sys.stdin.isatty():
-            prompt_val = input("Enter Target Container URL or Service [http://target_gateway:8080]: ").strip()
-            target_url = prompt_val or "http://target_gateway:8080"
+            print("\nSelect a Target Application:")
+            keys = list(TARGET_PRESETS.keys())
+            for idx, key in enumerate(keys, 1):
+                info = TARGET_PRESETS[key]
+                print(f"  [{idx}] {info['name']:<20} ({info['url']})")
+            print(f"  [{len(keys)+1}] Custom URL / Gateway")
+            choice = input(f"\nChoose target [1-{len(keys)+1}] (default 1 - {TARGET_PRESETS['juice-shop']['name']}): ").strip()
+            if choice.isdigit() and 1 <= int(choice) <= len(keys):
+                selected_key = keys[int(choice) - 1]
+                preset = TARGET_PRESETS[selected_key]
+                target_url = preset["url"]
+                target_path = preset["path"]
+                print(f"[+] Selected: {preset['name']} ({target_url})")
+            elif choice == str(len(keys)+1):
+                prompt_val = input("Enter Target URL [http://localhost:5000]: ").strip()
+                target_url = prompt_val or "http://localhost:5000"
+                target_path = input("Enter Target App Source Code Path [./target_app]: ").strip() or "./target_app"
+            else:
+                preset = TARGET_PRESETS["juice-shop"]
+                target_url = preset["url"]
+                target_path = preset["path"]
+                print(f"[+] Defaulting to: {preset['name']} ({target_url})")
         else:
-            target_url = "http://target_gateway:8080"
-
-    target_path = args.target_path
-    if not target_path:
-        if sys.stdin.isatty():
-            prompt_val = input("Enter Target App Source Code Path [./target_app]: ").strip()
-            target_path = prompt_val or "./target_app"
-        else:
+            target_url = "http://localhost:5000"
             target_path = "./target_app"
+
+    if not target_path:
+        target_path = "./target_app"
 
     rounds = args.rounds
     if rounds <= 0:

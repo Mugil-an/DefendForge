@@ -1,0 +1,25 @@
+{
+  "name": "flaskbb",
+  "service": "flaskbb",
+  "base_url": "http://localhost:5000",
+  "health": {
+    "path": "/"
+  },
+  "discovery": {
+    "crawl_enabled": true,
+    "max_depth": 3
+  },
+  "limits": {
+    "allowed_methods": ["GET", "POST", "PUT", "PATCH"]
+  },
+  "validation": {
+    "command": ["pytest", "tests"],
+    "working_dir": "/target",
+    "timeout": 300
+  },
+  "audit": {
+    "source_path": "/target",
+    "tools": ["pip-audit", "semgrep"],
+    "timeout_seconds": 300
+  }
+}

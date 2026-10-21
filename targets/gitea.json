@@ -1,0 +1,26 @@
+{
+  "name": "gitea",
+  "service": "gitea",
+  "base_url": "http://localhost:3000",
+  "health": {
+    "path": "/api/healthz"
+  },
+  "discovery": {
+    "openapi_path": "/swagger.v1.json",
+    "crawl_enabled": true,
+    "max_depth": 2
+  },
+  "limits": {
+    "allowed_methods": ["GET", "POST", "PUT", "DELETE", "PATCH"]
+  },
+  "validation": {
+    "command": ["npm", "test"],
+    "working_dir": "/target",
+    "timeout": 300
+  },
+  "audit": {
+    "source_path": "/target",
+    "tools": ["semgrep"],
+    "timeout_seconds": 300
+  }
+}

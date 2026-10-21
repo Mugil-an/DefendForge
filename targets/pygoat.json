@@ -1,0 +1,25 @@
+{
+  "name": "pygoat",
+  "service": "pygoat_app",
+  "base_url": "http://localhost:8000",
+  "health": {
+    "path": "/"
+  },
+  "discovery": {
+    "crawl_enabled": true,
+    "max_depth": 3
+  },
+  "limits": {
+    "allowed_methods": ["GET", "POST", "PUT", "PATCH"]
+  },
+  "validation": {
+    "command": ["python", "manage.py", "test"],
+    "working_dir": "/target",
+    "timeout": 300
+  },
+  "audit": {
+    "source_path": "/target",
+    "tools": ["pip-audit", "semgrep"],
+    "timeout_seconds": 300
+  }
+}

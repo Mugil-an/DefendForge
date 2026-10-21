@@ -1,0 +1,25 @@
+--- target_app/app.py
++++ target_app/app.py
+@@ -160,9 +160,21 @@
+ @app.route("/fetch")
+ def fetch_url():
+-    import urllib.request
+     url = request.args.get("url", "")
++    from urllib.parse import urlparse
++    # SSRF protection: allowlist external domains only
++    ALLOWED_DOMAINS = {"example.com", "httpbin.org", "jsonplaceholder.typicode.com"}
++    parsed = urlparse(url)
++    if parsed.scheme not in ("http", "https"):
++        return jsonify({"error": "Only HTTP(S) URLs are allowed"}), 400
++    if not parsed.hostname:
++        return jsonify({"error": "Invalid URL"}), 400
++    # Block internal/private IPs and localhost
++    blocked = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "169.254.169.254"}
++    if parsed.hostname in blocked or parsed.hostname.startswith("10.") or parsed.hostname.startswith("192.168."):
++        return jsonify({"error": "Access to internal resources is blocked"}), 403
+     try:
++        import urllib.request
+         resp = urllib.request.urlopen(url)  # noqa: S310
+         return resp.read().decode("utf-8", errors="replace")[:4096]
+     except Exception as exc:
+ 

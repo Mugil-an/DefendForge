@@ -57,9 +57,9 @@ NUM_FEATURES = len(FEATURE_NAMES)
 # Heuristic detectors for suspicious payloads
 # ---------------------------------------------------------------------------
 _SQL_KEYWORDS = {
-    "select", "union", "insert", "update", "delete", "drop",
-    "exec", "execute", "--", ";", "or 1=1", "' or", "1=1",
-    "sleep(", "benchmark(", "waitfor",
+    "select", "union", "insert into", "update", "delete from", "drop table", "drop database",
+    "exec", "execute", "--", "or 1=1", "' or", "1=1",
+    "sleep(", "benchmark(", "waitfor delay",
 }
 
 _SCRIPT_PATTERNS = {
@@ -198,11 +198,20 @@ def extract_features(event: Dict[str, Any]) -> np.ndarray:
         tracker.record_failed_login(source, now_ts)
 
     # Build combined payload for heuristic checks
+    payload_field = str(event.get("payload", "") or "")
     if isinstance(params, dict):
         params_str = "&".join(f"{k}={v}" for k, v in params.items())
     else:
         params_str = str(params)
-    payload = f"{endpoint} {params_str} {body}"
+    payload = f"{endpoint} {params_str} {body} {payload_field}"
+
+    import urllib.parse
+    try:
+        decoded_payload = urllib.parse.unquote(payload)
+        double_decoded = urllib.parse.unquote(decoded_payload)
+        search_payload = f"{payload} {decoded_payload} {double_decoded}".replace("/**/", " ")
+    except Exception:
+        search_payload = payload
 
     # Param count
     param_count = len(params) if isinstance(params, dict) else params_str.count("=")
@@ -211,9 +220,9 @@ def extract_features(event: Dict[str, Any]) -> np.ndarray:
     features = np.zeros(NUM_FEATURES, dtype=np.float32)
 
     features[0] = float(event.get("request_size", 0))
-    features[1] = float(event.get("response_size", 0))
+    features[1] = float(event.get("response_size", event.get("body_size", 0)))
     features[2] = float(event.get("response_code", 200))
-    features[3] = float(event.get("latency_ms", 0))
+    features[3] = float(event.get("latency_ms", event.get("response_time_ms", 0)))
     features[4] = tracker.request_rate(source, now_ts)
     features[5] = tracker.failed_login_count(source, 300, now_ts)
     features[6] = tracker.unique_endpoints(source, now_ts)
@@ -222,10 +231,10 @@ def extract_features(event: Dict[str, Any]) -> np.ndarray:
     features[9] = 1.0 if method == "PUT" else 0.0
     features[10] = 1.0 if method == "DELETE" else 0.0
     features[11] = 1.0 if method not in ("GET", "POST", "PUT", "DELETE") else 0.0
-    features[12] = 1.0 if _contains_any(payload, _SQL_KEYWORDS) else 0.0
-    features[13] = 1.0 if _contains_any(payload, _SCRIPT_PATTERNS) else 0.0
-    features[14] = 1.0 if _contains_any(payload, _PATH_TRAVERSAL_PATTERNS) else 0.0
-    features[15] = 1.0 if _contains_any(payload, _COMMAND_CHARS) else 0.0
+    features[12] = 1.0 if _contains_any(search_payload, _SQL_KEYWORDS) else 0.0
+    features[13] = 1.0 if _contains_any(search_payload, _SCRIPT_PATTERNS) else 0.0
+    features[14] = 1.0 if _contains_any(search_payload, _PATH_TRAVERSAL_PATTERNS) else 0.0
+    features[15] = 1.0 if _contains_any(search_payload, _COMMAND_CHARS) else 0.0
     features[16] = float(param_count)
     features[17] = _shannon_entropy(params_str)
     features[18] = float(len(endpoint))

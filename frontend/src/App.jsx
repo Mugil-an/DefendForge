@@ -45,7 +45,7 @@ export default function App() {
 
       const wsUrl = window.location.protocol === 'https:'
         ? `wss://${window.location.host}/ws`
-        : `ws://${window.location.hostname || 'localhost'}:8000/ws`;
+        : `ws://${window.location.host || 'localhost:8000'}/ws`;
 
       try {
         ws = new WebSocket(wsUrl);
@@ -256,7 +256,7 @@ export default function App() {
     } catch (err) {
       console.error('Backend API error starting arena:', err);
       setIsRunning(false);
-      alert(`Could not start arena battle: ${err.message}. Ensure DefendForge backend is running on :8000.`);
+      alert(`Could not start arena battle: ${err.message}. Ensure DefendForge backend is running and reachable at ${window.location.host || 'localhost'}.`);
     }
   };
 

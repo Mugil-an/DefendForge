@@ -43,9 +43,9 @@ services:
     ports:
       - "8080:8080"
     environment:
-      UPSTREAM_URL: http://target_app:5000
+      UPSTREAM_URL: ${UPSTREAM_URL:-http://target_app:5000}
       BLUE_AGENT_URL: http://blue_agent:8000/api/events
-      TARGET_ID: default
+      TARGET_ID: ${TARGET_ID:-default}
       PROVENANCE_SECRET: ${PROVENANCE_SECRET:-local-development-secret}
     depends_on:
       target_app:

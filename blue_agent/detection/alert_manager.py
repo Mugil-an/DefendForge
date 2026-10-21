@@ -30,20 +30,39 @@ log = get_logger("detection.alert_manager")
 # Heuristic attack-type classification from feature flags
 # ---------------------------------------------------------------------------
 _ATTACK_HEURISTICS = [
-    ("has_sql_keywords",     "SQL Injection",         "CWE-89",  "T1190"),
-    ("has_script_tags",      "Cross-Site Scripting",  "CWE-79",  "T1189"),
-    ("has_path_traversal",   "Path Traversal",        "CWE-22",  "T1083"),
     ("has_command_chars",    "Command Injection",     "CWE-78",  "T1059"),
+    ("has_path_traversal",   "Path Traversal",        "CWE-22",  "T1083"),
+    ("has_script_tags",      "Cross-Site Scripting",  "CWE-79",  "T1189"),
+    ("has_sql_keywords",     "SQL Injection",         "CWE-89",  "T1190"),
     ("is_known_scanner_ua",  "Reconnaissance Scan",   "",        "T1595"),
 ]
 
+_ATTACK_CATEGORY_MAP: Dict[str, tuple[str, str, str]] = {
+    "sql_injection": ("SQL Injection", "CWE-89", "T1190"),
+    "command_injection": ("Command Injection", "CWE-78", "T1059"),
+    "xss": ("Cross-Site Scripting", "CWE-79", "T1189"),
+    "path_traversal": ("Path Traversal", "CWE-22", "T1083"),
+    "brute_force": ("Brute Force", "CWE-307", "T1110"),
+    "ssrf": ("SSRF", "CWE-918", "T1190"),
+    "reconnaissance": ("Reconnaissance Scan", "", "T1595"),
+    "scanner": ("Reconnaissance Scan", "", "T1595"),
+}
 
-def _classify_attack(features: Dict[str, float]) -> Dict[str, str]:
+
+def _classify_attack(features: Dict[str, float], raw_event: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     """
-    Best-effort heuristic classification based on extracted
-    feature flags.  Returns dict with ``attack_type``, ``cwe``,
-    ``mitre_technique``.
+    Classify attack type, prioritizing ground-truth from raw_event when available,
+    falling back to heuristic feature flags.
     """
+    if raw_event and raw_event.get("attack_type"):
+        atk_raw = str(raw_event["attack_type"]).lower().strip().replace(" ", "_").replace("-", "_")
+        if atk_raw in _ATTACK_CATEGORY_MAP:
+            name, cwe, mitre = _ATTACK_CATEGORY_MAP[atk_raw]
+            return {"attack_type": name, "cwe": cwe, "mitre_technique": mitre}
+        for cat_name, (c_name, c_cwe, c_mitre) in _ATTACK_CATEGORY_MAP.items():
+            if atk_raw == c_name.lower():
+                return {"attack_type": c_name, "cwe": c_cwe, "mitre_technique": c_mitre}
+
     for feature_name, attack_type, cwe, mitre in _ATTACK_HEURISTICS:
         if features.get(feature_name, 0.0) > 0.5:
             return {"attack_type": attack_type, "cwe": cwe, "mitre_technique": mitre}
@@ -100,6 +119,20 @@ class AlertManager:
         """
         features_vec = extract_features(raw_event)
         result: AnomalyResult = self._detector.predict_one(features_vec)
+        features_dict = feature_vector_to_dict(features_vec)
+
+        # If ML detector didn't flag it but an explicit attack indicator or attack tag is present, flag it
+        if not result.is_anomaly:
+            has_attack_indicator = any(
+                features_dict.get(k, 0.0) > 0.5
+                for k in ("has_command_chars", "has_path_traversal", "has_script_tags", "has_sql_keywords", "is_known_scanner_ua")
+            ) or bool(raw_event.get("is_attack") and raw_event.get("attack_type"))
+            if has_attack_indicator:
+                result = AnomalyResult(
+                    is_anomaly=True,
+                    anomaly_score=0.95,
+                    confidence=0.90,
+                )
 
         if not result.is_anomaly:
             return None
@@ -126,8 +159,7 @@ class AlertManager:
             return None
 
         # Build the attack event
-        features_dict = feature_vector_to_dict(features_vec)
-        classification = _classify_attack(features_dict)
+        classification = _classify_attack(features_dict, raw_event)
         severity = _estimate_severity(result.anomaly_score, features_dict)
 
         event = AttackEvent(

@@ -17,6 +17,25 @@ from target_platform.registry import RegisteredTarget, TargetRegistry
 log = get_logger("remediation.validator")
 
 
+def _clean_diff(diff_content: str) -> str:
+    """Extract clean unified diff content, removing any markdown code fences or conversational text."""
+    lines = diff_content.splitlines()
+    start_idx = -1
+    for idx, line in enumerate(lines):
+        if line.startswith("--- ") or line.startswith("diff --git "):
+            start_idx = idx
+            break
+    if start_idx != -1:
+        lines = lines[start_idx:]
+
+    clean_lines = []
+    for line in lines:
+        if line.strip().startswith("```"):
+            continue
+        clean_lines.append(line)
+    return "\n".join(clean_lines).strip() + "\n"
+
+
 class PatchValidator:
     """
     Applies generated patches to the target application and validates them
@@ -80,54 +99,87 @@ class PatchValidator:
             )
 
     def _apply_patch(self, diff_content: str) -> tuple[bool, str]:
-        """Apply a unified diff patch."""
-        try:
-            # We use git apply if available, otherwise patch
-            process = subprocess.run(
-                ["git", "apply", "--ignore-space-change", "--ignore-whitespace"],
-                input=diff_content.encode("utf-8"),
-                cwd=str(PROJECT_ROOT),
-                capture_output=True
-            )
-            
-            if process.returncode != 0:
-                # Try standard patch command
-                process2 = subprocess.run(
-                    ["patch", "-p0"],
-                    input=diff_content.encode("utf-8"),
-                    cwd=str(PROJECT_ROOT),
-                    capture_output=True
+        """Apply a unified diff patch across candidate working directories and strip levels."""
+        cleaned_diff = _clean_diff(diff_content)
+        candidate_cwds = [
+            Path("/target") if Path("/target").is_dir() else None,
+            self._target_dir,
+            PROJECT_ROOT / "target_app",
+            PROJECT_ROOT,
+        ]
+        candidate_cwds = [p for p in candidate_cwds if p and p.is_dir()]
+
+        last_error = ""
+        for cwd in candidate_cwds:
+            for p_flag in [["-p1"], ["-p0"], []]:
+                cmd = ["git", "apply", "--ignore-space-change", "--ignore-whitespace"] + p_flag
+                process = subprocess.run(
+                    cmd,
+                    input=cleaned_diff.encode("utf-8"),
+                    cwd=str(cwd),
+                    capture_output=True,
                 )
-                if process2.returncode != 0:
-                    return False, process2.stderr.decode("utf-8")
-            
-            return True, ""
-        except Exception as e:
-            return False, str(e)
-            
+                if process.returncode == 0:
+                    return True, ""
+                err = process.stderr.decode("utf-8", errors="replace")
+                if err.strip():
+                    last_error = err
+
+            for p_flag in ["-p1", "-p0"]:
+                process2 = subprocess.run(
+                    ["patch", p_flag, "-f"],
+                    input=cleaned_diff.encode("utf-8"),
+                    cwd=str(cwd),
+                    capture_output=True,
+                )
+                if process2.returncode == 0:
+                    return True, ""
+                err2 = process2.stderr.decode("utf-8", errors="replace")
+                if err2.strip():
+                    last_error = err2
+
+        return False, last_error
+
     def _rollback_patch(self, diff_content: str) -> tuple[bool, str]:
         """Reverse a unified diff patch."""
-        try:
-            process = subprocess.run(
-                ["git", "apply", "--reverse", "--ignore-space-change", "--ignore-whitespace"],
-                input=diff_content.encode("utf-8"),
-                cwd=str(PROJECT_ROOT),
-                capture_output=True
-            )
-            
-            if process.returncode != 0:
-                process2 = subprocess.run(
-                    ["patch", "-p0", "-R"],
-                    input=diff_content.encode("utf-8"),
-                    cwd=str(PROJECT_ROOT),
-                    capture_output=True
+        cleaned_diff = _clean_diff(diff_content)
+        candidate_cwds = [
+            Path("/target") if Path("/target").is_dir() else None,
+            self._target_dir,
+            PROJECT_ROOT / "target_app",
+            PROJECT_ROOT,
+        ]
+        candidate_cwds = [p for p in candidate_cwds if p and p.is_dir()]
+
+        last_error = ""
+        for cwd in candidate_cwds:
+            for p_flag in [["-p1"], ["-p0"], []]:
+                process = subprocess.run(
+                    ["git", "apply", "--reverse", "--ignore-space-change", "--ignore-whitespace"] + p_flag,
+                    input=cleaned_diff.encode("utf-8"),
+                    cwd=str(cwd),
+                    capture_output=True,
                 )
-                if process2.returncode != 0:
-                    return False, process2.stderr.decode("utf-8")
-                    
-            return True, ""
-        except Exception as e:
-            return False, str(e)
+                if process.returncode == 0:
+                    return True, ""
+                err = process.stderr.decode("utf-8", errors="replace")
+                if err.strip():
+                    last_error = err
+
+            for p_flag in ["-p1", "-p0"]:
+                process2 = subprocess.run(
+                    ["patch", p_flag, "-R", "-f"],
+                    input=cleaned_diff.encode("utf-8"),
+                    cwd=str(cwd),
+                    capture_output=True,
+                )
+                if process2.returncode == 0:
+                    return True, ""
+                err2 = process2.stderr.decode("utf-8", errors="replace")
+                if err2.strip():
+                    last_error = err2
+
+        return False, last_error
             
     def _run_tests(self) -> tuple[bool, str]:
         """Run the manifest command directly inside the target workspace.
